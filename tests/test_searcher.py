@@ -69,3 +69,16 @@ def test_find_best_move_does_not_modify_board():
 
     assert board.move_history == history_before
     assert board.grid[7][7] == Player.BLACK
+
+
+def test_ai_as_black_wins_when_possible():
+    """AI 执黑时，有五连机会应该直接赢。"""
+    board = Board()
+    # AI(BLACK) 已有4子: (3,0)~(3,3)，右端 (3,4) 为空
+    for col in range(4):
+        board.place(3, col, Player.BLACK)
+    board.place(0, 14, Player.WHITE)  # 对手随机一子
+
+    searcher = AISearcher(depth=2, ai_player=Player.BLACK)
+    move = searcher.find_best_move(board)
+    assert move == (3, 4), f"Expected (3,4), got {move}"

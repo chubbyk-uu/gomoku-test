@@ -75,3 +75,11 @@ def test_winning_position_high_score():
         board.place(7, col, Player.WHITE)
     score = evaluate(board, Player.WHITE)
     assert score >= 100_000
+
+
+def test_opponent_winning_gives_negative_score():
+    # 对手五连时，对 AI 的净分应为负
+    board = Board()
+    for col in range(5):
+        board.place(7, col, Player.BLACK)
+    assert evaluate(board, Player.WHITE) <= -100_000

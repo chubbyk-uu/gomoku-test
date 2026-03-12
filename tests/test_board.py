@@ -136,6 +136,16 @@ def test_is_full_false_on_new_board():
     assert Board().is_full() is False
 
 
+def test_is_full_true_when_all_placed():
+    board = Board()
+    player = Player.BLACK
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            board.place(r, c, player)
+            player = Player.WHITE if player == Player.BLACK else Player.BLACK
+    assert board.is_full() is True
+
+
 def test_copy_is_independent():
     board = Board()
     board.place(7, 7, Player.BLACK)
