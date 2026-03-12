@@ -1,13 +1,12 @@
 """Tests for Board class."""
 
-import pytest
 from gomoku.board import Board
 from gomoku.config import BOARD_SIZE, Player
-
 
 # ---------------------------------------------------------------------------
 # place & undo
 # ---------------------------------------------------------------------------
+
 
 def test_place_and_undo():
     board = Board()
@@ -51,6 +50,7 @@ def test_undo_restores_last_move():
 # ---------------------------------------------------------------------------
 # check_win
 # ---------------------------------------------------------------------------
+
 
 def test_check_win_horizontal():
     board = Board()
@@ -98,6 +98,7 @@ def test_check_win_empty_cell():
 # get_candidate_moves
 # ---------------------------------------------------------------------------
 
+
 def test_candidate_moves_empty_board():
     board = Board()
     moves = board.get_candidate_moves()
@@ -131,6 +132,7 @@ def test_candidate_moves_no_duplicates():
 # ---------------------------------------------------------------------------
 # is_full & copy
 # ---------------------------------------------------------------------------
+
 
 def test_is_full_false_on_new_board():
     assert Board().is_full() is False

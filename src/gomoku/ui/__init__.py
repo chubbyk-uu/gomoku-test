@@ -1,1 +1,1 @@
-# UI subpackage
+"""UI subpackage: Pygame renderer."""

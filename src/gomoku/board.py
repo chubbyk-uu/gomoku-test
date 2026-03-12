@@ -16,9 +16,7 @@ class Board:
     """
 
     def __init__(self) -> None:
-        self.grid: list[list[Player]] = [
-            [Player.NONE] * BOARD_SIZE for _ in range(BOARD_SIZE)
-        ]
+        self.grid: list[list[Player]] = [[Player.NONE] * BOARD_SIZE for _ in range(BOARD_SIZE)]
         self.move_history: list[tuple[int, int, Player]] = []
         self.last_move: Optional[tuple[int, int]] = None
 
@@ -57,9 +55,7 @@ class Board:
         row, col, player = self.move_history.pop()
         self.grid[row][col] = Player.NONE
         self.last_move = (
-            (self.move_history[-1][0], self.move_history[-1][1])
-            if self.move_history
-            else None
+            (self.move_history[-1][0], self.move_history[-1][1]) if self.move_history else None
         )
         return row, col, player
 
@@ -137,9 +133,7 @@ class Board:
             True 表示无空位。
         """
         return all(
-            self.grid[i][j] != Player.NONE
-            for i in range(BOARD_SIZE)
-            for j in range(BOARD_SIZE)
+            self.grid[i][j] != Player.NONE for i in range(BOARD_SIZE) for j in range(BOARD_SIZE)
         )
 
     def copy(self) -> "Board":

@@ -4,20 +4,26 @@ from gomoku.board import Board
 from gomoku.config import BOARD_SIZE, Player
 
 # 评分表：(连子数, 封堵端数) -> 分值
-# blocks=0 表示两端均开放（活棋），blocks=1 表示一端被堵（冲棋），blocks=2 已无意义（跳过）
 SCORE_TABLE: dict[tuple[int, int], int] = {
-    (5, 0): 100_000,  # 五连（胜利）
-    (5, 1): 100_000,  # 五连（胜利，端点在边界也算）
+    (5, 0): 100_000,
+    (5, 1): 100_000,
     (5, 2): 100_000,
-    (4, 0): 10_000,   # 活四
-    (4, 1): 1_000,    # 冲四
-    (3, 0): 1_000,    # 活三
-    (3, 1): 100,      # 眠三
-    (2, 0): 100,      # 活二
-    (2, 1): 10,       # 眠二
-    (1, 0): 10,       # 活一
+    (4, 0): 10_000,  # 活四
+    (4, 1): 1_000,  # 冲四
+    (3, 0): 1_000,  # 活三
+    (3, 1): 100,  # 眠三
+    (2, 0): 100,  # 活二
+    (2, 1): 10,  # 眠二
+    (1, 0): 10,  # 活一
     (1, 1): 1,
 }
+
+# 组合棋型加分
+COMBO_DOUBLE_OPEN_THREE: int = 5_000  # 双活三 ≈ 必杀
+COMBO_OPEN_THREE_HALF_FOUR: int = 5_000  # 活三+冲四 ≈ 必杀
+
+# 防守加权：对手威胁分的额外乘数
+DEFENSE_WEIGHT: float = 1.5
 
 _DIRECTIONS: list[tuple[int, int]] = [(1, 0), (0, 1), (1, 1), (1, -1)]
 
@@ -42,37 +48,42 @@ def get_score(count: int, blocks: int) -> int:
 def evaluate(board: Board, ai_player: Player) -> int:
     """评估当前棋盘对 ai_player 的净分值。
 
-    采用「起点去重」策略：对每条连续棋型只从起点统计一次，避免重复计分。
+    计入组合棋型加分和防守加权。
 
     Args:
         board: 当前棋盘状态。
         ai_player: AI 执棋颜色。
 
     Returns:
-        AI 总分 − 对手总分（正值对 AI 有利）。
+        AI 总分 − 对手加权总分（正值对 AI 有利）。
     """
     opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
-    return _score_for(board, ai_player) - _score_for(board, opponent)
+    ai_score = _score_for(board, ai_player)
+    opp_score = _score_for(board, opponent)
+    return ai_score - int(opp_score * DEFENSE_WEIGHT)
 
 
 def _score_for(board: Board, player: Player) -> int:
-    """计算单方棋子的棋盘总分。
+    """计算单方棋子的棋盘总分（含组合棋型加分）。
 
     Args:
         board: 当前棋盘状态。
         player: 待评估的一方。
 
     Returns:
-        该方所有棋型分值之和。
+        该方所有棋型分值之和 + 组合加分。
     """
     grid = board.grid
     total = 0
+    open_fours = 0  # 活四数
+    half_fours = 0  # 冲四数
+    open_threes = 0  # 活三数
+
     for i in range(BOARD_SIZE):
         for j in range(BOARD_SIZE):
             if grid[i][j] != player:
                 continue
             for dr, dc in _DIRECTIONS:
-                # 只从每条连线的起点开始统计，跳过中间/末端格
                 prev_r, prev_c = i - dr, j - dc
                 if (
                     0 <= prev_r < BOARD_SIZE
@@ -81,7 +92,6 @@ def _score_for(board: Board, player: Player) -> int:
                 ):
                     continue
 
-                # 沿方向计数
                 count = 0
                 r, c = i, j
                 while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r][c] == player:
@@ -89,14 +99,40 @@ def _score_for(board: Board, player: Player) -> int:
                     r += dr
                     c += dc
 
-                # 检查末端是否被封堵
                 blocks = 0
-                if r < 0 or r >= BOARD_SIZE or c < 0 or c >= BOARD_SIZE or grid[r][c] != Player.NONE:
+                if (
+                    r < 0
+                    or r >= BOARD_SIZE
+                    or c < 0
+                    or c >= BOARD_SIZE
+                    or grid[r][c] != Player.NONE
+                ):
                     blocks += 1
-                # 检查起点反方向是否被封堵
                 pr, pc = i - dr, j - dc
-                if pr < 0 or pr >= BOARD_SIZE or pc < 0 or pc >= BOARD_SIZE or grid[pr][pc] != Player.NONE:
+                if (
+                    pr < 0
+                    or pr >= BOARD_SIZE
+                    or pc < 0
+                    or pc >= BOARD_SIZE
+                    or grid[pr][pc] != Player.NONE
+                ):
                     blocks += 1
 
                 total += get_score(count, blocks)
+
+                # 统计关键棋型数量
+                if blocks < 2:
+                    if count >= 4 and blocks == 0:
+                        open_fours += 1
+                    elif count >= 4 and blocks == 1:
+                        half_fours += 1
+                    elif count == 3 and blocks == 0:
+                        open_threes += 1
+
+    # 组合棋型加分
+    if open_threes >= 2:
+        total += COMBO_DOUBLE_OPEN_THREE
+    if open_threes >= 1 and half_fours >= 1:
+        total += COMBO_OPEN_THREE_HALF_FOUR
+
     return total

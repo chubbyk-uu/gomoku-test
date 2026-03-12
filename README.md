@@ -1,13 +1,23 @@
 # 五子棋 (Gomoku)
 
-基于 Pygame 的五子棋人机对弈游戏，AI 使用 Minimax + Alpha-Beta 剪枝算法。
+基于 Pygame 的五子棋人机对弈游戏，AI 使用 Minimax + Alpha-Beta 剪枝算法，配合候选点排序和组合棋型评估。
+
+## 界面截图说明
+
+- **开局界面**：木色背景居中显示标题和按键提示，按 `B` 执黑先手，按 `W` 执白后手
+- **对局界面**：15×15 棋盘，黑棋实心圆、白棋空心圆，最后一手用红色小方块标记
+- **结束界面**：棋盘保留，中央叠加半透明结果框，显示胜负文字及重启/退出提示
 
 ## 功能特性
 
-- 15×15 标准棋盘
+- 15×15 标准棋盘，黑棋先手
 - 人机对弈，可选执黑（先手）或执白（后手）
-- AI 使用 Minimax + Alpha-Beta 剪枝搜索
-- 支持悔棋（撤回一轮，即玩家和 AI 各一步）
+- AI 使用 Minimax + Alpha-Beta 剪枝，默认搜索深度 3
+- 候选点排序（Move Ordering）：先搜索评分高的着法，显著提升剪枝效率
+- 组合棋型检测：双活三、活三+冲四额外加分
+- 防守加权：对对手威胁分乘以 1.5 倍，AI 更积极防守
+- 支持悔棋（一次撤回玩家和 AI 各一步）
+- 最后一手落子高亮
 
 ## 安装
 
@@ -28,58 +38,111 @@ pip install -e ".[dev]"
 ## 运行
 
 ```bash
-# 方式一：直接运行单文件原型
-python gomoku.py
+# 安装后以模块方式运行（推荐）
+PYTHONPATH=src python -m gomoku
 
-# 方式二：安装后以模块方式运行
+# 或先 pip install -e . 再直接运行
 python -m gomoku
 ```
 
-## 操作说明
+## 操作快捷键
 
-| 操作 | 方式 |
+| 场景 | 按键 / 操作 | 说明 |
+|------|------------|------|
+| 开局界面 | `B` | 执黑（先手） |
+| 开局界面 | `W` | 执白（后手，AI 先走） |
+| 对局中 | 鼠标左键 | 在棋盘交叉点落子 |
+| 对局中 | `U` | 悔棋（撤回玩家和 AI 各一步） |
+| 游戏结束 | `R` | 重新开始新一局 |
+| 游戏结束 | `Q` | 退出游戏 |
+| 任意时刻 | 关闭窗口 | 退出游戏 |
+
+## AI 算法简介
+
+### Minimax + Alpha-Beta 剪枝
+
+递归搜索博弈树：AI（最大化方）和人类（最小化方）轮流模拟落子，Alpha-Beta 剪枝跳过不影响结果的分支，将搜索复杂度从 O(b^d) 大幅降低。
+
+### 候选点排序（Move Ordering）
+
+搜索前对每个候选点模拟落子并用评估函数快速打分，按分数排序后再进行深度搜索。好着法排在前面，Alpha-Beta 剪枝可以更早截断，实测比无排序快 2–3 倍，同等时间内可多搜一层。
+
+### 评估函数
+
+扫描棋盘上所有连续棋型，对每条线统计 `(连子数, 封堵端数)` 并查表打分：
+
+| 棋型 | 分值 |
 |------|------|
-| 选择执黑 | 开局界面按 `B` |
-| 选择执白 | 开局界面按 `W` |
-| 落子 | 鼠标左键点击棋盘交叉点 |
-| 悔棋 | 游戏中按 `U`（撤回玩家和 AI 各一步） |
-| 重新开始 | 游戏结束后按 `R` |
-| 退出 | 游戏结束后按 `Q`，或关闭窗口 |
+| 五连 | 100,000 |
+| 活四 | 10,000 |
+| 冲四 | 1,000 |
+| 活三 | 1,000 |
+| 眠三 | 100 |
+| 活二 | 100 |
 
-## 开发
+**组合加分**：双活三或活三+冲四各加 5,000（近似必杀局面）
 
-```bash
-# 运行测试
-pytest tests/ -v
-
-# 代码格式化
-black src/ tests/ --line-length 99
-
-# Lint 检查
-ruff check src/ tests/
-```
+**防守加权**：对手得分乘以 1.5 倍后再扣除，AI 优先防守紧迫威胁
 
 ## 项目结构
 
 ```
 gomoku-test/
-├── gomoku.py          # 单文件原型（可直接运行）
-├── src/gomoku/        # 模块化重构版本（开发中）
-│   ├── config.py      # 常量配置
-│   ├── board.py       # 棋盘逻辑
-│   ├── game.py        # 游戏控制器
+├── src/gomoku/
+│   ├── __main__.py    # 入口: python -m gomoku
+│   ├── config.py      # 常量与枚举 (Player, GameState, 尺寸, 颜色, AI 参数)
+│   ├── board.py       # Board 类 (落子/悔棋/胜负/候选点)
+│   ├── game.py        # GameController 状态机主循环
 │   ├── ai/
-│   │   ├── evaluator.py   # 棋面评估
-│   │   └── searcher.py    # Minimax 搜索
+│   │   ├── evaluator.py   # 评估函数 + 组合棋型 + 防守加权
+│   │   └── searcher.py    # AISearcher (Minimax + 候选点排序)
 │   └── ui/
-│       └── renderer.py    # Pygame 渲染
-└── tests/             # 单元测试
+│       └── renderer.py    # Renderer (棋盘/棋子/菜单/结束画面)
+└── tests/
+    ├── test_board.py      # Board 逻辑测试 (14 个用例)
+    ├── test_evaluator.py  # 评估函数测试 (13 个用例)
+    └── test_searcher.py   # AI 搜索测试 (5 个用例)
 ```
 
-## AI 说明
+## 开发者指南
 
-AI 使用经典的 Minimax 算法配合 Alpha-Beta 剪枝：
+### 运行测试
 
-- **评估函数**：统计双方各方向连子数，按"活四/冲四/活三"等棋型打分
-- **搜索深度**：默认 depth=2，可在代码中调整（depth>3 时性能下降明显）
-- **候选点生成**：只考虑已有棋子周围 1 格范围内的空位，大幅减少搜索空间
+```bash
+# 全量测试
+pytest tests/ -v
+
+# 单个模块
+pytest tests/test_board.py -v
+```
+
+> 注意：`pytest` 通过 `pyproject.toml` 的 `pythonpath = ["src"]` 和 `--import-mode=importlib` 自动处理包路径，无需额外设置 `PYTHONPATH`。
+
+### 代码规范
+
+```bash
+# 格式化（line-length=99）
+black src/ tests/ --line-length 99
+
+# Lint 检查
+ruff check src/ tests/
+
+# 自动修复 lint 问题
+ruff check src/ tests/ --fix
+```
+
+规范要求：
+- 所有函数签名必须有 type hints
+- Docstring 使用 Google 风格，中文注释 + 英文 docstring
+- 类用 `PascalCase`，函数/变量用 `snake_case`，常量用 `UPPER_SNAKE_CASE`
+
+### 调整 AI 强度
+
+修改 `src/gomoku/config.py`：
+
+```python
+AI_SEARCH_DEPTH: int = 3    # 搜索深度，建议 2–4
+AI_MOVE_DELAY_MS: int = 500  # AI 落子延时（ms），0 为即时响应
+```
+
+深度每增加 1，搜索时间约增加 3–5 倍（有候选点排序加持）。

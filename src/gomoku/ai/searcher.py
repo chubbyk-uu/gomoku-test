@@ -16,7 +16,7 @@ class AISearcher:
         ai_player: AI 执棋颜色。
     """
 
-    def __init__(self, depth: int = 2, ai_player: Player = Player.WHITE) -> None:
+    def __init__(self, depth: int = 3, ai_player: Player = Player.WHITE) -> None:
         self.depth = depth
         self.ai_player = ai_player
         self._opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
@@ -64,8 +64,19 @@ class AISearcher:
         if not moves:
             return evaluate(board, self.ai_player), None
 
-        best_move: Optional[tuple[int, int]] = None
+        # 候选点排序：模拟落子后快速评估，按对当前方有利程度降序排列
         current_player = self.ai_player if maximizing else self._opponent
+        scored_moves: list[tuple[int, int, int]] = []
+        for r, c in moves:
+            board.place(r, c, current_player)
+            score = evaluate(board, self.ai_player)
+            board.undo()
+            scored_moves.append((r, c, score))
+        # maximizing 方希望分高的先搜，minimizing 方希望分低的先搜
+        scored_moves.sort(key=lambda x: x[2], reverse=maximizing)
+        moves = [(r, c) for r, c, _ in scored_moves]
+
+        best_move: Optional[tuple[int, int]] = None
 
         if maximizing:
             best_score: float = -math.inf

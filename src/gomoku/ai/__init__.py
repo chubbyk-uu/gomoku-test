@@ -1,1 +1,1 @@
-# AI subpackage
+"""AI subpackage: board evaluator and Minimax searcher."""

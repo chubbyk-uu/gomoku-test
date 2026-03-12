@@ -13,6 +13,7 @@ def _make_searcher(ai_player: Player = Player.WHITE, depth: int = 2) -> AISearch
 # test_ai_blocks_four
 # ---------------------------------------------------------------------------
 
+
 def test_ai_blocks_four():
     """对手形成冲四（一端被边界封堵）时，AI 应该堵住唯一的开放端。"""
     board = Board()
@@ -29,6 +30,7 @@ def test_ai_blocks_four():
 # ---------------------------------------------------------------------------
 # test_ai_wins_when_possible
 # ---------------------------------------------------------------------------
+
 
 def test_ai_wins_when_possible():
     """AI 自身已有四连时，应该直接补全五连获胜。"""
@@ -49,6 +51,7 @@ def test_ai_wins_when_possible():
 # ---------------------------------------------------------------------------
 # test_find_best_move_returns_valid_position
 # ---------------------------------------------------------------------------
+
 
 def test_find_best_move_on_empty_board():
     """空棋盘时 AI 应该落子在天元（中心）。"""
