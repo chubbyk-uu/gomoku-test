@@ -108,7 +108,8 @@ class AISearcher:
             score = evaluate(board, self.ai_player)
             board.undo()
             scored_moves.append((r, c, score))
-        scored_moves.sort(key=lambda x: x[2], reverse=maximizing)
+        # 坐标作为 tiebreaker 保证排序稳定（set 迭代顺序不确定）
+        scored_moves.sort(key=lambda x: (x[2], x[0], x[1]), reverse=maximizing)
         moves = [(r, c) for r, c, _ in scored_moves[:AI_MAX_CANDIDATES]]
 
         best_move: Optional[tuple[int, int]] = None
