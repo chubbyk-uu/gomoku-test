@@ -9,6 +9,7 @@ from gomoku.board import Board
 from gomoku.config import (
     AI_MOVE_DELAY_MS,
     AI_SEARCH_DEPTH,
+    AI_SEARCH_TIME_LIMIT_S,
     FPS,
     WINDOW_SIZE,
     GameState,
@@ -144,7 +145,11 @@ class GameController:
 
     def _enter_playing(self) -> None:
         """切换到 PLAYING 状态并初始化 AI。"""
-        self._ai = AISearcher(depth=AI_SEARCH_DEPTH, ai_player=self._ai_player)
+        self._ai = AISearcher(
+            depth=AI_SEARCH_DEPTH,
+            ai_player=self._ai_player,
+            time_limit_s=AI_SEARCH_TIME_LIMIT_S,
+        )
         self._state = GameState.PLAYING
         self.renderer.draw_board(self._board)
         pygame.display.flip()

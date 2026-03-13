@@ -102,6 +102,7 @@ def test_immediate_win_short_circuits_ordering():
     assert move == (5, 4)
     assert searcher.last_search_stats.immediate_wins == 1
     assert searcher.last_search_stats.ordering_evals == 0
+    assert searcher.last_search_stats.completed_depth == 1
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,8 @@ def test_search_stats_populated_after_search():
     assert searcher.last_search_stats.nodes > 0
     assert searcher.last_search_stats.ordering_evals > 0
     assert searcher.last_search_stats.max_branching > 0
+    assert searcher.last_search_stats.completed_depth == 2
+    assert searcher.last_search_stats.timed_out is False
 
 
 def test_search_stats_reset_between_searches():
@@ -214,3 +217,64 @@ def test_tt_clears_when_limit_reached(monkeypatch):
     searcher.find_best_move(board)
 
     assert 0 < len(searcher._tt) <= 1
+
+
+def test_iterative_deepening_reaches_max_depth_without_time_limit():
+    """无时间限制时，应完成到配置的最大深度。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    searcher = AISearcher(depth=3, ai_player=Player.WHITE, time_limit_s=None)
+
+    move = searcher.find_best_move(board)
+
+    assert move is not None
+    assert searcher.last_search_stats.completed_depth == 3
+    assert searcher.last_search_stats.timed_out is False
+
+
+def test_time_limit_returns_last_completed_iteration(monkeypatch):
+    """超时时应回退到最后一层完整搜索结果，而不是半截结果。"""
+    depth1_searcher = AISearcher(depth=1, ai_player=Player.WHITE)
+    board = Board()
+    expected_move = depth1_searcher.find_best_move(board)
+
+    counter = {"calls": 0}
+
+    def fake_perf_counter() -> float:
+        counter["calls"] += 1
+        return 0.0 if counter["calls"] <= 40 else 1.0
+
+    monkeypatch.setattr(searcher_module.time, "perf_counter", fake_perf_counter)
+
+    timed_searcher = AISearcher(depth=4, ai_player=Player.WHITE, time_limit_s=0.5)
+    move = timed_searcher.find_best_move(board)
+
+    assert move == expected_move
+    assert timed_searcher.last_search_stats.completed_depth == 1
+    assert timed_searcher.last_search_stats.timed_out is True
+
+
+def test_timeout_does_not_leak_simulated_moves_to_board(monkeypatch):
+    """子递归超时时，搜索中的模拟落子必须被完整回滚。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    board_before = board.move_history.copy()
+    hash_before = board.hash
+
+    searcher = AISearcher(depth=2, ai_player=Player.WHITE, time_limit_s=1.0)
+    counter = {"calls": 0}
+
+    def fake_check_timeout() -> None:
+        counter["calls"] += 1
+        if counter["calls"] >= 4:
+            raise searcher_module.SearchTimeout()
+
+    monkeypatch.setattr(searcher, "_check_timeout", fake_check_timeout)
+
+    move = searcher.find_best_move(board)
+
+    assert move is None
+    assert board.move_history == board_before
+    assert board.hash == hash_before
+    assert board.last_move == (7, 7)
+    assert board.grid[7][7] == Player.BLACK
