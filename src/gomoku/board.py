@@ -1,24 +1,41 @@
 """Gomoku board logic."""
 
-import copy
+import random as _random
 from typing import Optional
 
+import numpy as np
+
 from gomoku.config import BOARD_SIZE, Player
+
+_CANDIDATE_RANGE = 2  # 候选点搜索半径
+
+# Zobrist 哈希表：_ZOBRIST[row][col][player_index]，player_index: BLACK=0, WHITE=1
+# 固定随机种子保证每次进程内一致
+_rng = _random.Random(42)
+_ZOBRIST: list[list[list[int]]] = [
+    [[_rng.getrandbits(64), _rng.getrandbits(64)] for _ in range(BOARD_SIZE)]
+    for _ in range(BOARD_SIZE)
+]
 
 
 class Board:
     """封装五子棋棋盘状态与操作。
 
     Attributes:
-        grid: 15x15 二维列表，值为 Player 枚举。
+        grid: 15x15 numpy 数组（int8），值为 Player 枚举的整数值。
         move_history: 落子历史，每条记录为 (row, col, player)。
         last_move: 最后一手坐标 (row, col)，棋盘为空时为 None。
+        hash: 当前局面的 Zobrist 哈希值（64 位整数），随落子/悔棋增量更新。
     """
 
     def __init__(self) -> None:
-        self.grid: list[list[Player]] = [[Player.NONE] * BOARD_SIZE for _ in range(BOARD_SIZE)]
+        self.grid: np.ndarray = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.int8)
         self.move_history: list[tuple[int, int, Player]] = []
         self.last_move: Optional[tuple[int, int]] = None
+        self.hash: int = 0
+        # 增量候选点集合，及每步的增删记录（用于 undo 精确恢复）
+        self._candidates: set[tuple[int, int]] = set()
+        self._candidate_history: list[tuple[set[tuple[int, int]], set[tuple[int, int]]]] = []
 
     # ------------------------------------------------------------------
     # Mutation
@@ -37,9 +54,34 @@ class Board:
         """
         if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
             return False
-        if self.grid[row][col] != Player.NONE:
+        if self.grid[row, col] != Player.NONE:
             return False
-        self.grid[row][col] = player
+
+        # 计算候选点增量：落子前统计，确保 grid 尚未更新
+        removed: set[tuple[int, int]] = set()
+        if (row, col) in self._candidates:
+            removed.add((row, col))
+
+        added: set[tuple[int, int]] = set()
+        for dr in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1):
+            for dc in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = row + dr, col + dc
+                if (
+                    0 <= nr < BOARD_SIZE
+                    and 0 <= nc < BOARD_SIZE
+                    and self.grid[nr, nc] == Player.NONE
+                    and (nr, nc) not in self._candidates
+                ):
+                    added.add((nr, nc))
+
+        self._candidates -= removed
+        self._candidates |= added
+        self._candidate_history.append((added, removed))
+
+        self.grid[row, col] = player
+        self.hash ^= _ZOBRIST[row][col][int(player) - 1]
         self.move_history.append((row, col, player))
         self.last_move = (row, col)
         return True
@@ -53,10 +95,17 @@ class Board:
         if not self.move_history:
             return None
         row, col, player = self.move_history.pop()
-        self.grid[row][col] = Player.NONE
+        self.grid[row, col] = Player.NONE
+        self.hash ^= _ZOBRIST[row][col][int(player) - 1]
         self.last_move = (
             (self.move_history[-1][0], self.move_history[-1][1]) if self.move_history else None
         )
+
+        # 精确恢复候选点集合
+        added, removed = self._candidate_history.pop()
+        self._candidates -= added
+        self._candidates |= removed
+
         return row, col, player
 
     # ------------------------------------------------------------------
@@ -66,6 +115,8 @@ class Board:
     def check_win(self, row: int, col: int) -> bool:
         """检查 (row, col) 处的棋子是否构成五连珠。
 
+        利用 numpy 切片提取行、列和对角线，再统计该位置的连续段长度。
+
         Args:
             row: 行坐标。
             col: 列坐标。
@@ -73,58 +124,53 @@ class Board:
         Returns:
             True 表示该位置构成胜利；空位返回 False。
         """
-        player = self.grid[row][col]
-        if player == Player.NONE:
+        player_val = int(self.grid[row, col])
+        if player_val == Player.NONE:
             return False
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-        for dr, dc in directions:
-            count = 1
-            for sign in (1, -1):
-                step = 1
-                while True:
-                    r = row + sign * dr * step
-                    c = col + sign * dc * step
-                    if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and self.grid[r][c] == player:
-                        count += 1
-                        step += 1
-                    else:
-                        break
-            if count >= 5:
-                return True
+
+        def _run_length(line: np.ndarray, pos: int) -> int:
+            """计算 line[pos] 所在连续同色段的长度。"""
+            mask: np.ndarray = line == player_val
+            start = pos
+            while start > 0 and mask[start - 1]:
+                start -= 1
+            end = pos + 1
+            while end < len(line) and mask[end]:
+                end += 1
+            return end - start
+
+        # 水平
+        if _run_length(self.grid[row, :], col) >= 5:
+            return True
+        # 垂直
+        if _run_length(self.grid[:, col], row) >= 5:
+            return True
+        # 主对角线 (\)
+        diag_k = col - row
+        diag = np.diag(self.grid, diag_k)
+        diag_pos = min(row, col)
+        if _run_length(diag, diag_pos) >= 5:
+            return True
+        # 反对角线 (/)
+        anti_col = BOARD_SIZE - 1 - col
+        anti_k = anti_col - row
+        anti_diag = np.diag(np.fliplr(self.grid), anti_k)
+        anti_pos = min(row, anti_col)
+        if _run_length(anti_diag, anti_pos) >= 5:
+            return True
         return False
 
     def get_candidate_moves(self) -> list[tuple[int, int]]:
         """返回所有邻近已有棋子的空位（候选落子点）。
 
-        若棋盘为空，直接返回天元（中心点）。
+        若棋盘为空，直接返回天元（中心点）。候选点通过增量集合维护，O(1) 获取。
 
         Returns:
             候选坐标列表 [(row, col), ...]。
         """
         if not self.move_history:
             return [(BOARD_SIZE // 2, BOARD_SIZE // 2)]
-
-        candidates: list[tuple[int, int]] = []
-        for i in range(BOARD_SIZE):
-            for j in range(BOARD_SIZE):
-                if self.grid[i][j] != Player.NONE:
-                    continue
-                found = False
-                for di in range(-1, 2):
-                    for dj in range(-1, 2):
-                        ni, nj = i + di, j + dj
-                        if (
-                            0 <= ni < BOARD_SIZE
-                            and 0 <= nj < BOARD_SIZE
-                            and self.grid[ni][nj] != Player.NONE
-                        ):
-                            found = True
-                            break
-                    if found:
-                        break
-                if found:
-                    candidates.append((i, j))
-        return candidates
+        return list(self._candidates)
 
     def is_full(self) -> bool:
         """棋盘是否已落满。
@@ -132,9 +178,7 @@ class Board:
         Returns:
             True 表示无空位。
         """
-        return all(
-            self.grid[i][j] != Player.NONE for i in range(BOARD_SIZE) for j in range(BOARD_SIZE)
-        )
+        return bool(np.all(self.grid != Player.NONE))
 
     def copy(self) -> "Board":
         """返回棋盘的深拷贝，用于 AI 搜索时的模拟落子。
@@ -143,7 +187,10 @@ class Board:
             新的 Board 实例，状态与当前相同。
         """
         new_board = Board()
-        new_board.grid = copy.deepcopy(self.grid)
+        new_board.grid = np.copy(self.grid)
         new_board.move_history = self.move_history.copy()
         new_board.last_move = self.last_move
+        new_board.hash = self.hash
+        new_board._candidates = self._candidates.copy()
+        new_board._candidate_history = [(a.copy(), r.copy()) for a, r in self._candidate_history]
         return new_board

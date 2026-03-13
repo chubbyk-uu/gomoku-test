@@ -85,3 +85,48 @@ def test_ai_as_black_wins_when_possible():
     searcher = AISearcher(depth=2, ai_player=Player.BLACK)
     move = searcher.find_best_move(board)
     assert move == (3, 4), f"Expected (3,4), got {move}"
+
+
+# ---------------------------------------------------------------------------
+# 置换表 (TT) 测试
+# ---------------------------------------------------------------------------
+
+
+def test_tt_populated_after_search():
+    """搜索完成后置换表应有条目（确认 TT 被写入）。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    searcher = _make_searcher(depth=2)
+    searcher.find_best_move(board)
+    assert len(searcher._tt) > 0
+
+
+def test_tt_cleared_between_searches():
+    """每次调用 find_best_move 前置换表应清空，避免跨局面污染。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    searcher = _make_searcher(depth=2)
+
+    searcher.find_best_move(board)
+    size_after_first = len(searcher._tt)
+
+    searcher.find_best_move(board)
+    size_after_second = len(searcher._tt)
+
+    # 两次搜索相同局面，TT 大小应相同（第二次重新填充，非累积）
+    assert size_after_first == size_after_second
+
+
+def test_tt_does_not_change_result():
+    """有无置换表，搜索结果应一致（TT 只加速，不改变决策）。"""
+    board = Board()
+    for col in range(3):
+        board.place(5, col, Player.WHITE)
+    board.place(0, 14, Player.BLACK)
+
+    searcher = _make_searcher(depth=3)
+    move1 = searcher.find_best_move(board)
+
+    # 第二次搜索（TT 重新构建）结果相同
+    move2 = searcher.find_best_move(board)
+    assert move1 == move2

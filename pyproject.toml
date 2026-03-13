@@ -9,6 +9,7 @@ description = "五子棋 AI 对弈游戏 (Gomoku with Minimax AI)"
 requires-python = ">=3.10"
 dependencies = [
     "pygame>=2.5",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]

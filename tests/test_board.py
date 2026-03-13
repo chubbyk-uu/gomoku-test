@@ -160,3 +160,51 @@ def test_copy_is_independent():
     # 修改 clone 不影响原棋盘
     clone.place(0, 0, Player.WHITE)
     assert board.grid[0][0] == Player.NONE
+
+
+# ---------------------------------------------------------------------------
+# Zobrist hash
+# ---------------------------------------------------------------------------
+
+
+def test_hash_zero_on_empty_board():
+    """空棋盘哈希值为 0。"""
+    assert Board().hash == 0
+
+
+def test_hash_nonzero_after_place():
+    """落子后哈希值应改变（非零）。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    assert board.hash != 0
+
+
+def test_hash_restored_after_undo():
+    """落子后悔棋，哈希值应回到原值（XOR 自反性）。"""
+    board = Board()
+    h0 = board.hash
+    board.place(7, 7, Player.BLACK)
+    board.place(3, 3, Player.WHITE)
+    board.undo()
+    board.undo()
+    assert board.hash == h0
+
+
+def test_hash_same_for_transposition():
+    """不同落子顺序达到相同局面时，哈希值相同（置换表核心假设）。"""
+    b1 = Board()
+    b1.place(7, 7, Player.BLACK)
+    b1.place(3, 3, Player.WHITE)
+
+    b2 = Board()
+    b2.place(3, 3, Player.WHITE)
+    b2.place(7, 7, Player.BLACK)
+
+    assert b1.hash == b2.hash
+
+
+def test_hash_preserved_in_copy():
+    """copy() 后哈希值与原棋盘相同。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    assert board.copy().hash == board.hash

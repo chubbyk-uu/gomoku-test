@@ -74,39 +74,35 @@ def _score_for(board: Board, player: Player) -> int:
         该方所有棋型分值之和 + 组合加分。
     """
     grid = board.grid
+    player_val = int(player)
+    none_val = int(Player.NONE)
     total = 0
-    open_fours = 0  # 活四数
-    half_fours = 0  # 冲四数
-    open_threes = 0  # 活三数
+    open_fours = 0
+    half_fours = 0
+    open_threes = 0
 
     for i in range(BOARD_SIZE):
         for j in range(BOARD_SIZE):
-            if grid[i][j] != player:
+            if grid[i, j] != player_val:
                 continue
             for dr, dc in _DIRECTIONS:
                 prev_r, prev_c = i - dr, j - dc
                 if (
                     0 <= prev_r < BOARD_SIZE
                     and 0 <= prev_c < BOARD_SIZE
-                    and grid[prev_r][prev_c] == player
+                    and grid[prev_r, prev_c] == player_val
                 ):
                     continue
 
                 count = 0
                 r, c = i, j
-                while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r][c] == player:
+                while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player_val:
                     count += 1
                     r += dr
                     c += dc
 
                 blocks = 0
-                if (
-                    r < 0
-                    or r >= BOARD_SIZE
-                    or c < 0
-                    or c >= BOARD_SIZE
-                    or grid[r][c] != Player.NONE
-                ):
+                if r < 0 or r >= BOARD_SIZE or c < 0 or c >= BOARD_SIZE or grid[r, c] != none_val:
                     blocks += 1
                 pr, pc = i - dr, j - dc
                 if (
@@ -114,13 +110,12 @@ def _score_for(board: Board, player: Player) -> int:
                     or pr >= BOARD_SIZE
                     or pc < 0
                     or pc >= BOARD_SIZE
-                    or grid[pr][pc] != Player.NONE
+                    or grid[pr, pc] != none_val
                 ):
                     blocks += 1
 
                 total += get_score(count, blocks)
 
-                # 统计关键棋型数量
                 if blocks < 2:
                     if count >= 4 and blocks == 0:
                         open_fours += 1
