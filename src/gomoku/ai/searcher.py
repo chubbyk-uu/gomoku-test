@@ -56,8 +56,9 @@ class AISearcher:
 
         置换表 flag 语义：
           "E" (exact)       —— V = score，精确值，可直接返回。
-          "L" (lower bound) —— V >= score，beta 截断导致未完全搜索。
-          "U" (upper bound) —— V <= score，未能超过 alpha 的失败低节点。
+          "L" (lower bound) —— V >= score，maximizing 节点发生 beta 截断。
+          "U" (upper bound) —— V <= score，maximizing 无截断但未能超过 alpha_orig；
+                              或 minimizing 节点发生 alpha 截断。
 
         Args:
             board: 当前棋盘（使用 place/undo 原地修改，搜索结束后复原）。
@@ -135,7 +136,6 @@ class AISearcher:
             self._tt[h] = (depth, best_score, flag, best_move)
             return best_score, best_move
         else:
-            beta_orig = beta  # 保存调用方传入的 beta，供事后判断 flag
             best_score = math.inf
             for row, col in moves:
                 board.place(row, col, current_player)
@@ -153,7 +153,6 @@ class AISearcher:
                     # alpha 截断：真实值 <= best_score，存为上界
                     self._tt[h] = (depth, best_score, "U", best_move)
                     return best_score, best_move
-            # 无截断：判断精确值还是下界（所有子节点均高于 beta_orig，真实值 >= best_score）
-            flag = "L" if best_score >= beta_orig else "E"
-            self._tt[h] = (depth, best_score, flag, best_move)
+            # 无截断：所有候选点均已遍历，best_score 是精确最小值
+            self._tt[h] = (depth, best_score, "E", best_move)
             return best_score, best_move

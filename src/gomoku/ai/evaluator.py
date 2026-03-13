@@ -9,7 +9,7 @@ SCORE_TABLE: dict[tuple[int, int], int] = {
     (5, 1): 100_000,
     (5, 2): 100_000,
     (4, 0): 10_000,  # 活四
-    (4, 1): 1_000,  # 冲四
+    (4, 1): 3_000,  # 冲四（一步致胜，紧迫性高于活三）
     (3, 0): 1_000,  # 活三
     (3, 1): 100,  # 眠三
     (2, 0): 100,  # 活二
@@ -117,9 +117,9 @@ def _score_for(board: Board, player: Player) -> int:
                 total += get_score(count, blocks)
 
                 if blocks < 2:
-                    if count >= 4 and blocks == 0:
+                    if count == 4 and blocks == 0:
                         open_fours += 1
-                    elif count >= 4 and blocks == 1:
+                    elif count == 4 and blocks == 1:
                         half_fours += 1
                     elif count == 3 and blocks == 0:
                         open_threes += 1
