@@ -1,148 +1,169 @@
 # 五子棋 (Gomoku)
 
-基于 Pygame 的五子棋人机对弈游戏，AI 使用 Minimax + Alpha-Beta 剪枝算法，配合候选点排序和组合棋型评估。
+基于 `Pygame` 的五子棋人机对弈项目。AI 使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表与迭代加深搜索，支持固定最大深度和可选限时搜索。
 
-## 界面截图说明
-
-- **开局界面**：木色背景居中显示标题和按键提示，按 `B` 执黑先手，按 `W` 执白后手
-- **对局界面**：15×15 棋盘，黑棋实心圆、白棋空心圆，最后一手用红色小方块标记
-- **结束界面**：棋盘保留，中央叠加半透明结果框，显示胜负文字及重启/退出提示
-
-## 功能特性
+## 当前状态
 
 - 15×15 标准棋盘，黑棋先手
-- 人机对弈，可选执黑（先手）或执白（后手）
-- AI 使用 Minimax + Alpha-Beta 剪枝，默认搜索深度 3
-- 候选点排序（Move Ordering）：先搜索评分高的着法，显著提升剪枝效率
-- 组合棋型检测：双活三、活三+冲四额外加分
-- 防守加权：对对手威胁分乘以 1.5 倍，AI 更积极防守
-- 支持悔棋（一次撤回玩家和 AI 各一步）
-- 最后一手落子高亮
+- 支持人机对弈，玩家可选执黑或执白
+- AI 默认配置：
+  - 最大搜索深度：`4`
+  - 单步时间上限：`3.0s`
+  - 候选点上限：`15`
+- 支持悔棋：一次撤回玩家和 AI 各一步
+- 支持 benchmark 自对弈和搜索统计输出
+
+## 主要特性
+
+- `Minimax + Alpha-Beta` 剪枝
+- 候选点排序（move ordering）
+- 置换表（Transposition Table, Zobrist Hash）
+- 评估缓存
+- 迭代加深（Iterative Deepening）
+- PV 优先搜索
+- 一步成五预检查
+- 最后一手高亮显示
 
 ## 安装
 
-**环境要求：** Python 3.10+
+环境要求：`Python 3.10+`
 
 ```bash
-# 克隆项目
-git clone <repo-url>
-cd gomoku-test
-
-# 安装运行依赖
-pip install pygame
-
-# 或安装完整开发依赖（含测试、格式化、lint 工具）
 pip install -e ".[dev]"
+```
+
+如果只想运行游戏，安装运行依赖也可以：
+
+```bash
+pip install pygame numpy
 ```
 
 ## 运行
 
-```bash
-# 安装后以模块方式运行（推荐）
-PYTHONPATH=src python -m gomoku
+推荐从仓库根目录执行：
 
-# 或先 pip install -e . 再直接运行
+```bash
+PYTHONPATH=src python -m gomoku
+```
+
+如果已经 `pip install -e .`，也可以直接运行：
+
+```bash
 python -m gomoku
 ```
 
-## 操作快捷键
+## 操作
 
 | 场景 | 按键 / 操作 | 说明 |
-|------|------------|------|
-| 开局界面 | `B` | 执黑（先手） |
-| 开局界面 | `W` | 执白（后手，AI 先走） |
-| 对局中 | 鼠标左键 | 在棋盘交叉点落子 |
-| 对局中 | `U` | 悔棋（撤回玩家和 AI 各一步） |
-| 游戏结束 | `R` | 重新开始新一局 |
-| 游戏结束 | `Q` | 退出游戏 |
-| 任意时刻 | 关闭窗口 | 退出游戏 |
+|------|-------------|------|
+| 开局界面 | `B` | 执黑，玩家先手 |
+| 开局界面 | `W` | 执白，AI 先手 |
+| 对局中 | 鼠标左键 | 在最近的交叉点落子 |
+| 对局中 | `U` | 悔棋（撤回双方各一步） |
+| 结束界面 | `R` | 重新开始 |
+| 结束界面 | `Q` | 退出游戏 |
 
-## AI 算法简介
+## AI 设计
 
-### Minimax + Alpha-Beta 剪枝
+### 搜索
 
-递归搜索博弈树：AI（最大化方）和人类（最小化方）轮流模拟落子，Alpha-Beta 剪枝跳过不影响结果的分支，将搜索复杂度从 O(b^d) 大幅降低。
+AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/searcher.py)。
 
-### 候选点排序（Move Ordering）
-
-搜索前对每个候选点模拟落子并用评估函数快速打分，按分数排序后再进行深度搜索。好着法排在前面，Alpha-Beta 剪枝可以更早截断，实测比无排序快 2–3 倍，同等时间内可多搜一层。
+- 迭代加深从 `depth=1` 逐层加深到最大深度
+- 如果设置了时间上限，则在超时前返回最后一层完整搜索结果
+- 置换表缓存历史局面的搜索结果
+- 上一轮最佳着法会通过 TT/PV 优先在下一轮提前搜索
 
 ### 评估函数
 
-扫描棋盘上所有连续棋型，对每条线统计 `(连子数, 封堵端数)` 并查表打分：
+评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/evaluator.py)。
 
-| 棋型 | 分值 |
-|------|------|
-| 五连 | 100,000 |
-| 活四 | 10,000 |
-| 冲四 | 1,000 |
-| 活三 | 1,000 |
-| 眠三 | 100 |
-| 活二 | 100 |
+当前使用模式识别打分，覆盖：
 
-**组合加分**：双活三或活三+冲四各加 5,000（近似必杀局面）
+- `FIVE`
+- `OPEN_FOUR`
+- `HALF_FOUR`
+- `OPEN_THREE`
+- `HALF_THREE`
+- `OPEN_TWO`
+- `HALF_TWO`
 
-**防守加权**：对手得分乘以 1.5 倍后再扣除，AI 优先防守紧迫威胁
+并包含：
+
+- 组合威胁加分
+- 防守权重
+- 对局面两方的净分评估
 
 ## 项目结构
 
-```
+```text
 gomoku-test/
 ├── src/gomoku/
-│   ├── __main__.py    # 入口: python -m gomoku
-│   ├── config.py      # 常量与枚举 (Player, GameState, 尺寸, 颜色, AI 参数)
-│   ├── board.py       # Board 类 (落子/悔棋/胜负/候选点)
-│   ├── game.py        # GameController 状态机主循环
+│   ├── __main__.py
+│   ├── config.py
+│   ├── board.py
+│   ├── game.py
 │   ├── ai/
-│   │   ├── evaluator.py   # 评估函数 + 组合棋型 + 防守加权
-│   │   └── searcher.py    # AISearcher (Minimax + 候选点排序)
+│   │   ├── evaluator.py
+│   │   └── searcher.py
 │   └── ui/
-│       └── renderer.py    # Renderer (棋盘/棋子/菜单/结束画面)
-└── tests/
-    ├── test_board.py      # Board 逻辑测试 (14 个用例)
-    ├── test_evaluator.py  # 评估函数测试 (13 个用例)
-    └── test_searcher.py   # AI 搜索测试 (5 个用例)
+│       └── renderer.py
+├── tests/
+│   ├── test_board.py
+│   ├── test_evaluator.py
+│   └── test_searcher.py
+└── tools/
+    ├── benchmark.py
+    └── run_benchmark.py
 ```
 
-## 开发者指南
+## Benchmark
 
-### 运行测试
+运行自对弈 benchmark：
 
 ```bash
-# 全量测试
-pytest tests/ -v
-
-# 单个模块
-pytest tests/test_board.py -v
+PYTHONPATH=src python tools/run_benchmark.py --depth-a 4 --depth-b 4 --games 4 --quiet
 ```
 
-> 注意：`pytest` 通过 `pyproject.toml` 的 `pythonpath = ["src"]` 和 `--import-mode=importlib` 自动处理包路径，无需额外设置 `PYTHONPATH`。
+输出内容包括：
 
-### 代码规范
+- 胜负和平均用时
+- 每步平均搜索节点数
+- 叶子评估次数
+- 排序阶段评估次数
+- TT 命中和剪枝统计
+- 平均分支因子
+
+## 开发
+
+运行测试：
 
 ```bash
-# 格式化（line-length=99）
-black src/ tests/ --line-length 99
-
-# Lint 检查
-ruff check src/ tests/
-
-# 自动修复 lint 问题
-ruff check src/ tests/ --fix
+pytest -q
 ```
 
-规范要求：
-- 所有函数签名必须有 type hints
-- Docstring 使用 Google 风格，中文注释 + 英文 docstring
-- 类用 `PascalCase`，函数/变量用 `snake_case`，常量用 `UPPER_SNAKE_CASE`
+单测当前覆盖：
 
-### 调整 AI 强度
+- 棋盘落子、悔棋、胜负判断、候选点维护
+- 评估器棋型识别
+- 搜索结果稳定性
+- TT / 缓存复用
+- 迭代加深与限时回退
+- 超时场景下模拟落子回滚
 
-修改 `src/gomoku/config.py`：
+## 可调参数
+
+配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/config.py)。
 
 ```python
-AI_SEARCH_DEPTH: int = 3    # 搜索深度，建议 2–4
-AI_MOVE_DELAY_MS: int = 500  # AI 落子延时（ms），0 为即时响应
+AI_SEARCH_DEPTH = 4
+AI_SEARCH_TIME_LIMIT_S = 3.0
+AI_MAX_CANDIDATES = 15
+AI_MOVE_DELAY_MS = 100
 ```
 
-深度每增加 1，搜索时间约增加 3–5 倍（有候选点排序加持）。
+建议：
+
+- 想要更快响应：降低 `AI_SEARCH_TIME_LIMIT_S`
+- 想要更强棋力：提高 `AI_SEARCH_DEPTH`，但耗时会明显增加
+- 如果只是想减少体感等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
