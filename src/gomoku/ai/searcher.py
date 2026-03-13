@@ -1,15 +1,31 @@
 """Minimax searcher with alpha-beta pruning and transposition table for Gomoku AI."""
 
 import math
+from dataclasses import dataclass
 from typing import Optional
 
 from gomoku.ai.evaluator import evaluate
 from gomoku.board import Board
-from gomoku.config import AI_MAX_CANDIDATES, Player
+from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
 
 # 置换表条目：(depth, score, flag, best_move)
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
+
+
+@dataclass
+class SearchStats:
+    """一次搜索的统计信息，用于 profiling 和回归观测。"""
+
+    nodes: int = 0
+    leaf_evals: int = 0
+    ordering_evals: int = 0
+    tt_hits: int = 0
+    tt_cutoffs: int = 0
+    beta_cutoffs: int = 0
+    alpha_cutoffs: int = 0
+    immediate_wins: int = 0
+    max_branching: int = 0
 
 
 class AISearcher:
@@ -24,11 +40,15 @@ class AISearcher:
         self.depth = depth
         self.ai_player = ai_player
         self._opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
+        self._tt: dict[int, _TTEntry] = {}
+        self._eval_cache: dict[int, int] = {}
+        self.last_search_stats = SearchStats()
 
     def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
         """为 AI 找出当前局面下的最优落子位置。
 
-        每次调用前清空置换表，避免跨局面的哈希污染。
+        置换表和评估缓存会在同一局内复用，避免重复搜索/重复评估。
+        它们都以局面哈希为 key，不会改变搜索结果，只减少重复工作。
 
         Args:
             board: 当前棋盘状态（不会被修改）。
@@ -36,9 +56,63 @@ class AISearcher:
         Returns:
             最优落子坐标 (row, col)；无候选点时返回 None。
         """
-        self._tt: dict[int, _TTEntry] = {}
+        self.last_search_stats = SearchStats()
         _, move = self._minimax(board, self.depth, -math.inf, math.inf, maximizing=True)
         return move
+
+    def _evaluate(self, board: Board) -> int:
+        """返回当前局面的评估值，并缓存结果以复用。"""
+        h = board.hash
+        cached = self._eval_cache.get(h)
+        if cached is not None:
+            return cached
+        score = evaluate(board, self.ai_player)
+        if len(self._eval_cache) >= AI_EVAL_CACHE_MAX_SIZE:
+            self._eval_cache.clear()
+        self._eval_cache[h] = score
+        return score
+
+    @staticmethod
+    def _store_tt(
+        tt: dict[int, _TTEntry],
+        h: int,
+        entry: _TTEntry,
+    ) -> None:
+        """写入置换表；超限时先清空，避免长局无限增长。"""
+        if len(tt) >= AI_TT_MAX_SIZE:
+            tt.clear()
+        tt[h] = entry
+
+    def _find_immediate_winning_move(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+        current_player: Player,
+    ) -> Optional[tuple[int, int]]:
+        """检查候选点中是否存在一步直接成五的着法。"""
+        for row, col in moves:
+            board.place(row, col, current_player)
+            is_win = board.check_win(row, col)
+            board.undo()
+            if is_win:
+                return row, col
+        return None
+
+    @staticmethod
+    def _prioritize_tt_move(
+        moves: list[tuple[int, int]],
+        tt_move: Optional[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """若 TT 提供了候选中的 best move，则将其提前到首位。"""
+        if tt_move is None:
+            return moves
+        try:
+            idx = moves.index(tt_move)
+        except ValueError:
+            return moves
+        if idx == 0:
+            return moves
+        return [moves[idx], *moves[:idx], *moves[idx + 1 :]]
 
     # ------------------------------------------------------------------
     # Internal
@@ -70,12 +144,14 @@ class AISearcher:
         Returns:
             (评分, 最优落子) 的二元组；叶节点时落子为 None。
         """
+        self.last_search_stats.nodes += 1
         h = board.hash
         alpha_orig = alpha  # 保存调用方传入的 alpha，供事后判断 flag
 
         # --- 置换表查询 ---
         entry = self._tt.get(h)
         if entry is not None:
+            self.last_search_stats.tt_hits += 1
             tt_depth, tt_score, tt_flag, tt_move = entry
             if tt_depth >= depth:
                 if tt_flag == "E":
@@ -85,32 +161,48 @@ class AISearcher:
                 else:  # "U"
                     beta = min(beta, tt_score)
                 if beta <= alpha:
+                    self.last_search_stats.tt_cutoffs += 1
                     return tt_score, tt_move
 
         # --- 叶节点 ---
         if depth == 0:
-            score = evaluate(board, self.ai_player)
+            self.last_search_stats.leaf_evals += 1
+            score = self._evaluate(board)
             self._tt[h] = (0, score, "E", None)
             return score, None
 
         # --- 无候选点 ---
         moves = board.get_candidate_moves()
         if not moves:
-            score = evaluate(board, self.ai_player)
-            self._tt[h] = (depth, score, "E", None)
+            self.last_search_stats.leaf_evals += 1
+            score = self._evaluate(board)
+            self._store_tt(self._tt, h, (depth, score, "E", None))
             return score, None
 
-        # --- 候选点排序：模拟落子后快速评估，按对当前方有利程度降序排列；截断到前 N 个 ---
         current_player = self.ai_player if maximizing else self._opponent
+        self.last_search_stats.max_branching = max(self.last_search_stats.max_branching, len(moves))
+        tt_move = entry[3] if entry is not None else None
+
+        # --- 候选点预检查：若当前走子方存在一步直接成五，则无需再做完整排序 ---
+        winning_move = self._find_immediate_winning_move(board, moves, current_player)
+        if winning_move is not None:
+            self.last_search_stats.immediate_wins += 1
+            score = 100_000.0 if maximizing else -100_000.0
+            self._store_tt(self._tt, h, (depth, score, "E", winning_move))
+            return score, winning_move
+
+        # --- 候选点排序：模拟落子后快速评估，按对当前方有利程度降序排列；截断到前 N 个 ---
         scored_moves: list[tuple[int, int, int]] = []
         for r, c in moves:
             board.place(r, c, current_player)
-            score = evaluate(board, self.ai_player)
+            self.last_search_stats.ordering_evals += 1
+            score = self._evaluate(board)
             board.undo()
             scored_moves.append((r, c, score))
         # 坐标作为 tiebreaker 保证排序稳定（set 迭代顺序不确定）
         scored_moves.sort(key=lambda x: (x[2], x[0], x[1]), reverse=maximizing)
         moves = [(r, c) for r, c, _ in scored_moves[:AI_MAX_CANDIDATES]]
+        moves = self._prioritize_tt_move(moves, tt_move)
 
         best_move: Optional[tuple[int, int]] = None
 
@@ -118,10 +210,6 @@ class AISearcher:
             best_score: float = -math.inf
             for row, col in moves:
                 board.place(row, col, current_player)
-                if board.check_win(row, col):
-                    board.undo()
-                    self._tt[h] = (depth, 100_000.0, "E", (row, col))
-                    return 100_000.0, (row, col)
                 score, _ = self._minimax(board, depth - 1, alpha, beta, False)
                 board.undo()
                 if score > best_score:
@@ -130,20 +218,17 @@ class AISearcher:
                 alpha = max(alpha, best_score)
                 if beta <= alpha:
                     # beta 截断：真实值 >= best_score，存为下界
-                    self._tt[h] = (depth, best_score, "L", best_move)
+                    self.last_search_stats.beta_cutoffs += 1
+                    self._store_tt(self._tt, h, (depth, best_score, "L", best_move))
                     return best_score, best_move
             # 无截断：判断是精确值还是上界（未能超过 alpha_orig）
             flag = "U" if best_score <= alpha_orig else "E"
-            self._tt[h] = (depth, best_score, flag, best_move)
+            self._store_tt(self._tt, h, (depth, best_score, flag, best_move))
             return best_score, best_move
         else:
             best_score = math.inf
             for row, col in moves:
                 board.place(row, col, current_player)
-                if board.check_win(row, col):
-                    board.undo()
-                    self._tt[h] = (depth, -100_000.0, "E", (row, col))
-                    return -100_000.0, (row, col)
                 score, _ = self._minimax(board, depth - 1, alpha, beta, True)
                 board.undo()
                 if score < best_score:
@@ -152,8 +237,9 @@ class AISearcher:
                 beta = min(beta, best_score)
                 if beta <= alpha:
                     # alpha 截断：真实值 <= best_score，存为上界
-                    self._tt[h] = (depth, best_score, "U", best_move)
+                    self.last_search_stats.alpha_cutoffs += 1
+                    self._store_tt(self._tt, h, (depth, best_score, "U", best_move))
                     return best_score, best_move
             # 无截断：所有候选点均已遍历，best_score 是精确最小值
-            self._tt[h] = (depth, best_score, "E", best_move)
+            self._store_tt(self._tt, h, (depth, best_score, "E", best_move))
             return best_score, best_move

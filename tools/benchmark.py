@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from gomoku.ai.searcher import AISearcher
+from gomoku.ai.searcher import AISearcher, SearchStats
 from gomoku.board import Board
 from gomoku.config import BOARD_SIZE, Player
 
@@ -32,6 +32,8 @@ class BenchmarkResult:
     move_times_a: list[float] = field(default_factory=list)
     move_times_b: list[float] = field(default_factory=list)
     game_lengths: list[int] = field(default_factory=list)
+    search_stats_a: list[SearchStats] = field(default_factory=list)
+    search_stats_b: list[SearchStats] = field(default_factory=list)
 
     def total_games(self) -> int:
         """Return total number of completed games."""
@@ -68,6 +70,40 @@ class BenchmarkResult:
         return max(self.move_times_b) if self.move_times_b else 0.0
 
 
+@dataclass
+class StatsSummary:
+    """Aggregate summary for a list of SearchStats."""
+
+    avg_nodes: float = 0.0
+    avg_leaf_evals: float = 0.0
+    avg_ordering_evals: float = 0.0
+    avg_tt_hits: float = 0.0
+    avg_tt_cutoffs: float = 0.0
+    avg_beta_cutoffs: float = 0.0
+    avg_alpha_cutoffs: float = 0.0
+    avg_immediate_wins: float = 0.0
+    avg_max_branching: float = 0.0
+
+
+def _summarize_stats(stats_list: list[SearchStats]) -> StatsSummary:
+    """Return per-move averages over search stats collected during benchmark."""
+    if not stats_list:
+        return StatsSummary()
+
+    total = len(stats_list)
+    return StatsSummary(
+        avg_nodes=sum(s.nodes for s in stats_list) / total,
+        avg_leaf_evals=sum(s.leaf_evals for s in stats_list) / total,
+        avg_ordering_evals=sum(s.ordering_evals for s in stats_list) / total,
+        avg_tt_hits=sum(s.tt_hits for s in stats_list) / total,
+        avg_tt_cutoffs=sum(s.tt_cutoffs for s in stats_list) / total,
+        avg_beta_cutoffs=sum(s.beta_cutoffs for s in stats_list) / total,
+        avg_alpha_cutoffs=sum(s.alpha_cutoffs for s in stats_list) / total,
+        avg_immediate_wins=sum(s.immediate_wins for s in stats_list) / total,
+        avg_max_branching=sum(s.max_branching for s in stats_list) / total,
+    )
+
+
 def _random_opening_move() -> tuple[int, int]:
     """Return a random position within the center 5×5 area of the board."""
     center = BOARD_SIZE // 2
@@ -81,6 +117,8 @@ def _play_game(
     searcher_white: AISearcher,
     times_black: list[float],
     times_white: list[float],
+    stats_black: list[SearchStats],
+    stats_white: list[SearchStats],
 ) -> tuple[Optional[Player], int]:
     """Play a single game to completion.
 
@@ -108,10 +146,12 @@ def _play_game(
             t0 = time.perf_counter()
             move = searcher_black.find_best_move(board)
             times_black.append(time.perf_counter() - t0)
+            stats_black.append(searcher_black.last_search_stats)
         else:
             t0 = time.perf_counter()
             move = searcher_white.find_best_move(board)
             times_white.append(time.perf_counter() - t0)
+            stats_white.append(searcher_white.last_search_stats)
 
         if move is None:
             return None, num_moves  # no candidates — treat as draw
@@ -133,6 +173,7 @@ def run_benchmark(
     player_b: AISearcher,
     num_games: int = 20,
     verbose: bool = True,
+    print_report: bool = True,
 ) -> BenchmarkResult:
     """Run automated self-play benchmark between two AISearcher instances.
 
@@ -147,7 +188,8 @@ def run_benchmark(
         player_a: "New" / challenger searcher (used for depth config).
         player_b: "Baseline" searcher (used for depth config).
         num_games: Total number of games to play.
-        verbose: Print per-game results and a final summary report.
+        verbose: Print per-game results.
+        print_report: Print the final summary report.
 
     Returns:
         BenchmarkResult with win/draw counts and timing statistics.
@@ -155,6 +197,8 @@ def run_benchmark(
     result = BenchmarkResult()
     times_a: list[float] = []
     times_b: list[float] = []
+    stats_a: list[SearchStats] = []
+    stats_b: list[SearchStats] = []
 
     for game_idx in range(num_games):
         # 随机分配颜色，保证大数上均衡但每局不可预测
@@ -168,18 +212,24 @@ def run_benchmark(
 
         times_black: list[float] = []
         times_white: list[float] = []
+        stats_black: list[SearchStats] = []
+        stats_white: list[SearchStats] = []
 
-        winner, num_moves = _play_game(sb, sw, times_black, times_white)
+        winner, num_moves = _play_game(sb, sw, times_black, times_white, stats_black, stats_white)
         result.game_lengths.append(num_moves)
 
         if a_is_black:
             times_a.extend(times_black)
             times_b.extend(times_white)
+            stats_a.extend(stats_black)
+            stats_b.extend(stats_white)
             winner_is_a = winner == Player.BLACK
             winner_is_b = winner == Player.WHITE
         else:
             times_a.extend(times_white)
             times_b.extend(times_black)
+            stats_a.extend(stats_white)
+            stats_b.extend(stats_black)
             winner_is_a = winner == Player.WHITE
             winner_is_b = winner == Player.BLACK
 
@@ -199,8 +249,10 @@ def run_benchmark(
 
     result.move_times_a = times_a
     result.move_times_b = times_b
+    result.search_stats_a = stats_a
+    result.search_stats_b = stats_b
 
-    if verbose:
+    if print_report:
         _print_report(result, player_a.depth, player_b.depth)
 
     return result
@@ -210,6 +262,8 @@ def _print_report(result: BenchmarkResult, depth_a: int, depth_b: int) -> None:
     """Print a formatted summary report to stdout."""
     total = result.total_games()
     avg_len = sum(result.game_lengths) / len(result.game_lengths) if result.game_lengths else 0.0
+    stats_a = _summarize_stats(result.search_stats_a)
+    stats_b = _summarize_stats(result.search_stats_b)
 
     print()
     print("=" * 52)
@@ -234,5 +288,33 @@ def _print_report(result: BenchmarkResult, depth_a: int, depth_b: int) -> None:
     print(
         f"  Timing B  avg={result.avg_time_b * 1000:>7.1f} ms"
         f"  max={result.max_time_b * 1000:>7.1f} ms"
+    )
+    print()
+    print(
+        f"  Search A  nodes={stats_a.avg_nodes:>7.1f}"
+        f"  leaf={stats_a.avg_leaf_evals:>7.1f}"
+        f"  order={stats_a.avg_ordering_evals:>7.1f}"
+    )
+    print(
+        f"  Search A  tt_hits={stats_a.avg_tt_hits:>5.1f}"
+        f"  tt_cut={stats_a.avg_tt_cutoffs:>5.1f}"
+        f"  beta={stats_a.avg_beta_cutoffs:>5.1f}"
+        f"  alpha={stats_a.avg_alpha_cutoffs:>5.1f}"
+    )
+    print(
+        f"  Search B  nodes={stats_b.avg_nodes:>7.1f}"
+        f"  leaf={stats_b.avg_leaf_evals:>7.1f}"
+        f"  order={stats_b.avg_ordering_evals:>7.1f}"
+    )
+    print(
+        f"  Search B  tt_hits={stats_b.avg_tt_hits:>5.1f}"
+        f"  tt_cut={stats_b.avg_tt_cutoffs:>5.1f}"
+        f"  beta={stats_b.avg_beta_cutoffs:>5.1f}"
+        f"  alpha={stats_b.avg_alpha_cutoffs:>5.1f}"
+    )
+    print(
+        f"  Branching avg  A={stats_a.avg_max_branching:>5.1f}"
+        f"  B={stats_b.avg_max_branching:>5.1f}"
+        f"  wins_now A/B={stats_a.avg_immediate_wins:>4.1f}/{stats_b.avg_immediate_wins:>4.1f}"
     )
     print("=" * 52)

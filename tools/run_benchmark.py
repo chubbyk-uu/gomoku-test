@@ -39,7 +39,13 @@ def main() -> None:
     player_a = AISearcher(depth=args.depth_a, ai_player=Player.BLACK)
     player_b = AISearcher(depth=args.depth_b, ai_player=Player.WHITE)
 
-    run_benchmark(player_a, player_b, num_games=args.games, verbose=not args.quiet)
+    run_benchmark(
+        player_a,
+        player_b,
+        num_games=args.games,
+        verbose=not args.quiet,
+        print_report=True,
+    )
 
 
 if __name__ == "__main__":

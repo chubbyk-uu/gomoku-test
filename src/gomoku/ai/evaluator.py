@@ -1,6 +1,7 @@
 """Board evaluation for Gomoku AI — pattern-based shape recognition."""
 
 from enum import IntEnum
+from functools import lru_cache
 
 from gomoku.board import Board
 from gomoku.config import BOARD_SIZE, Player
@@ -74,7 +75,28 @@ def _extract_line(
     return line
 
 
-def _match_shapes(line: list[int]) -> list[Shape]:
+def _extract_line_from_array(
+    grid: object, row: int, col: int, dr: int, dc: int, player_val: int
+) -> tuple[int, ...]:
+    """从 numpy 棋盘中提取 9 格线段，避免 tolist() 的复制开销。"""
+    line: list[int] = []
+    for i in range(-4, 5):
+        r, c = row + dr * i, col + dc * i
+        if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+            v = grid[r, c]
+            if v == player_val:
+                line.append(_X)
+            elif v == 0:
+                line.append(_E)
+            else:
+                line.append(_O)
+        else:
+            line.append(_O)
+    return tuple(line)
+
+
+@lru_cache(maxsize=8192)
+def _match_shapes_cached(line: tuple[int, ...]) -> tuple[Shape, ...]:
     """对一条 9 格线段，识别中心点（index=4）参与的所有棋型。
 
     中心点必须是己方棋子 (_X)。
@@ -86,7 +108,7 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         识别到的棋型列表（可能为空或含多个）。
     """
     if line[4] != _X:
-        return []
+        return ()
 
     shapes: list[Shape] = []
 
@@ -98,7 +120,7 @@ def _match_shapes(line: list[int]) -> list[Shape]:
             break
         if all(line[k] == _X for k in range(start, end)):
             shapes.append(Shape.FIVE)
-            return shapes  # 连五直接返回，无需继续
+            return tuple(shapes)  # 连五直接返回，无需继续
 
     # OPEN_FOUR: _XXXX_  窗口大小 6
     for start in range(max(0, 4 - 4), min(4, 4 + 1)):
@@ -109,7 +131,7 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (window[0] == _E and window[5] == _E
                 and all(window[k] == _X for k in range(1, 5))):
             shapes.append(Shape.OPEN_FOUR)
-            return shapes  # 活四直接返回
+            return tuple(shapes)  # 活四直接返回
 
     # HALF_FOUR: 冲四（含跳冲四）
     # 连冲四: OXXXX_ 或 _XXXXO  窗口大小 6
@@ -122,10 +144,10 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if four_mid:
             if window[0] == _O and window[5] == _E:
                 shapes.append(Shape.HALF_FOUR)
-                return shapes
+                return tuple(shapes)
             if window[0] == _E and window[5] == _O:
                 shapes.append(Shape.HALF_FOUR)
-                return shapes
+                return tuple(shapes)
 
     # 跳冲四: X_XXX (5格), XXX_X (5格), XX_XX (5格)
     # 这些模式中有4个X和1个空位，且两端至少一端被封堵或只看内部
@@ -137,13 +159,13 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         w = line[start:end]
         if (w[0] == _X and w[1] == _E and w[2] == _X and w[3] == _X and w[4] == _X):
             shapes.append(Shape.HALF_FOUR)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _X and w[1] == _X and w[2] == _X and w[3] == _E and w[4] == _X):
             shapes.append(Shape.HALF_FOUR)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _X and w[1] == _X and w[2] == _E and w[3] == _X and w[4] == _X):
             shapes.append(Shape.HALF_FOUR)
-            return shapes
+            return tuple(shapes)
 
     # OPEN_THREE: 活三（含跳活三）
     # 连活三: __XXX_ (6格) 或 _XXX__ (6格)
@@ -157,12 +179,12 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _E and w[1] == _E and w[2] == _X and w[3] == _X
                 and w[4] == _X and w[5] == _E):
             shapes.append(Shape.OPEN_THREE)
-            return shapes
+            return tuple(shapes)
         # _XXX__
         if (w[0] == _E and w[1] == _X and w[2] == _X and w[3] == _X
                 and w[4] == _E and w[5] == _E):
             shapes.append(Shape.OPEN_THREE)
-            return shapes
+            return tuple(shapes)
 
     # 跳活三: _X_XX_ (6格), _XX_X_ (6格)
     for start in range(max(0, 4 - 5), min(4, 4 + 1)):
@@ -173,11 +195,11 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _E and w[1] == _X and w[2] == _E and w[3] == _X
                 and w[4] == _X and w[5] == _E):
             shapes.append(Shape.OPEN_THREE)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _E and w[1] == _X and w[2] == _X and w[3] == _E
                 and w[4] == _X and w[5] == _E):
             shapes.append(Shape.OPEN_THREE)
-            return shapes
+            return tuple(shapes)
 
     # HALF_THREE: 眠三（含跳眠三）
     # 连眠三: O_XXX__ (7格), __XXX_O (7格)
@@ -190,12 +212,12 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _O and w[1] == _E and w[2] == _X and w[3] == _X
                 and w[4] == _X and w[5] == _E and w[6] == _E):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
         # __XXX_O
         if (w[0] == _E and w[1] == _E and w[2] == _X and w[3] == _X
                 and w[4] == _X and w[5] == _E and w[6] == _O):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
 
     # 连眠三 (6格): OXXX__ 或 __XXXO
     for start in range(max(0, 4 - 4), min(4, 4 + 1)):
@@ -207,12 +229,12 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _O and w[1] == _X and w[2] == _X and w[3] == _X
                 and w[4] == _E and w[5] == _E):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
         # __XXXO
         if (w[0] == _E and w[1] == _E and w[2] == _X and w[3] == _X
                 and w[4] == _X and w[5] == _O):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
 
     # 跳眠三: OX_XX_ (6格), _XX_XO (6格), OXX_X_ (6格), _X_XXO (6格)
     for start in range(max(0, 4 - 5), min(4, 4 + 1)):
@@ -223,19 +245,19 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _O and w[1] == _X and w[2] == _E and w[3] == _X
                 and w[4] == _X and w[5] == _E):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _E and w[1] == _X and w[2] == _X and w[3] == _E
                 and w[4] == _X and w[5] == _O):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _O and w[1] == _X and w[2] == _X and w[3] == _E
                 and w[4] == _X and w[5] == _E):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _E and w[1] == _X and w[2] == _E and w[3] == _X
                 and w[4] == _X and w[5] == _O):
             shapes.append(Shape.HALF_THREE)
-            return shapes
+            return tuple(shapes)
 
     # OPEN_TWO: 活二（含跳活二）
     # 连活二: __XX__ (6格)
@@ -247,7 +269,7 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _E and w[1] == _E and w[2] == _X and w[3] == _X
                 and w[4] == _E and w[5] == _E):
             shapes.append(Shape.OPEN_TWO)
-            return shapes
+            return tuple(shapes)
 
     # 跳活二: _X_X_ (5格)
     for start in range(max(0, 4 - 4), min(5, 4 + 1)):
@@ -257,7 +279,7 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         w = line[start:end]
         if (w[0] == _E and w[1] == _X and w[2] == _E and w[3] == _X and w[4] == _E):
             shapes.append(Shape.OPEN_TWO)
-            return shapes
+            return tuple(shapes)
 
     # HALF_TWO: 眠二
     # 连眠二: OXX___ (6格), ___XXO (6格)
@@ -269,11 +291,11 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _O and w[1] == _X and w[2] == _X and w[3] == _E
                 and w[4] == _E and w[5] == _E):
             shapes.append(Shape.HALF_TWO)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _E and w[1] == _E and w[2] == _E and w[3] == _X
                 and w[4] == _X and w[5] == _O):
             shapes.append(Shape.HALF_TWO)
-            return shapes
+            return tuple(shapes)
 
     # 跳眠二: OX_X__ (6格), __X_XO (6格)
     for start in range(max(0, 4 - 5), min(4, 4 + 1)):
@@ -284,13 +306,18 @@ def _match_shapes(line: list[int]) -> list[Shape]:
         if (w[0] == _O and w[1] == _X and w[2] == _E and w[3] == _X
                 and w[4] == _E and w[5] == _E):
             shapes.append(Shape.HALF_TWO)
-            return shapes
+            return tuple(shapes)
         if (w[0] == _E and w[1] == _E and w[2] == _X and w[3] == _E
                 and w[4] == _X and w[5] == _O):
             shapes.append(Shape.HALF_TWO)
-            return shapes
+            return tuple(shapes)
 
-    return shapes
+    return tuple(shapes)
+
+
+def _match_shapes(line: list[int]) -> list[Shape]:
+    """列表版本包装，供测试和外部调用。"""
+    return list(_match_shapes_cached(tuple(line)))
 
 
 def _count_shapes(board: Board, player: Player) -> dict[Shape, int]:
@@ -306,7 +333,7 @@ def _count_shapes(board: Board, player: Player) -> dict[Shape, int]:
     Returns:
         各棋型到数量的映射。
     """
-    grid = board.grid.tolist()
+    grid = board.grid
     player_val = int(player)
     counts: dict[Shape, int] = {s: 0 for s in Shape}
     # 记录已识别的 (棋子位置, 方向) 组合，避免同一条棋型被多个棋子重复计数
@@ -320,15 +347,15 @@ def _count_shapes(board: Board, player: Player) -> dict[Shape, int]:
                 key = (i, j, dr, dc)
                 if key in seen:
                     continue
-                line = _extract_line(grid, i, j, dr, dc, player_val)
-                matched = _match_shapes(line)
+                line = _extract_line_from_array(grid, i, j, dr, dc, player_val)
+                matched = _match_shapes_cached(line)
                 for shape in matched:
                     counts[shape] += 1
                     # 标记该方向上其他己方棋子，避免重复
                     for step in range(-4, 5):
                         r, c = i + dr * step, j + dc * step
                         if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-                            if grid[r][c] == player_val:
+                            if grid[r, c] == player_val:
                                 seen.add((r, c, dr, dc))
 
     return counts
