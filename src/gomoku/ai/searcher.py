@@ -135,6 +135,7 @@ class AISearcher:
             self._tt[h] = (depth, best_score, flag, best_move)
             return best_score, best_move
         else:
+            beta_orig = beta  # 保存调用方传入的 beta，供事后判断 flag
             best_score = math.inf
             for row, col in moves:
                 board.place(row, col, current_player)
@@ -152,6 +153,7 @@ class AISearcher:
                     # alpha 截断：真实值 <= best_score，存为上界
                     self._tt[h] = (depth, best_score, "U", best_move)
                     return best_score, best_move
-            # 无截断：已完整搜索，精确值
-            self._tt[h] = (depth, best_score, "E", best_move)
+            # 无截断：判断精确值还是下界（所有子节点均高于 beta_orig，真实值 >= best_score）
+            flag = "L" if best_score >= beta_orig else "E"
+            self._tt[h] = (depth, best_score, flag, best_move)
             return best_score, best_move

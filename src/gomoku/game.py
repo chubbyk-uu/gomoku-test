@@ -53,9 +53,10 @@ class GameController:
         """启动并运行游戏主循环，直到玩家退出。"""
         self._start_new_game()
         while True:
+            prev_state = self._state
             self._tick()
-            # GAME_OVER 中按 R 会把 state 设回 MENU，此时开始新一局
-            if self._state == GameState.MENU:
+            # 仅在 GAME_OVER → MENU 的状态转换时开始新一局，避免每帧重复初始化
+            if prev_state == GameState.GAME_OVER and self._state == GameState.MENU:
                 self._start_new_game()
 
     # ------------------------------------------------------------------

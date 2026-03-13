@@ -79,7 +79,6 @@ gomoku/
 1. ✅ 候选点排序 (Move Ordering): 搜索前按即时评分排序
 2. ✅ Alpha-Beta 剪枝: 大幅减少搜索节点
 3. ✅ 搜索深度 3: 有排序加持后性能可接受
-4. ✅ 组合棋型评估: 双活三/活三+冲四加分
 5. ✅ 防守加权: 对手威胁×1.5
 
 ## AI 后续优化方向
@@ -111,3 +110,32 @@ ruff check src/ tests/
 - 棋盘坐标: board[row][col], row 是行(纵向), col 是列(横向)
 - pytest 运行需要 pyproject.toml 中的 pythonpath=["src"] 和 --import-mode=importlib
 - 评分函数的数值平衡很重要，修改后需要对局测试验证
+
+## 当前进度（截至 2026-03-13）
+
+### 已完成的 Bug 修复
+1. **`game.py` run() 主循环重复初始化**（已修复）
+   - 原代码在 MENU 状态下每帧都调用 `_start_new_game()`，导致棋盘状态被反复重置
+   - 修复方案：引入 `prev_state`，仅在 `GAME_OVER → MENU` 状态转换时才触发 `_start_new_game()`
+
+2. **`searcher.py` 置换表 minimizing 分支 flag 错误**（已修复）
+   - 原代码在 minimizing 无截断路径无条件存 `"E"`（精确值），但当所有子节点分值均 ≥ 调用方传入的 `beta` 时，真实值是下界，应存 `"L"`
+   - 修复方案：保存 `beta_orig`，用 `"L" if best_score >= beta_orig else "E"` 正确区分
+
+### 已实现的 AI 优化（更新）
+1. ✅ 候选点排序 (Move Ordering)
+2. ✅ Alpha-Beta 剪枝
+3. ✅ 置换表 (Transposition Table)：Zobrist 哈希 + fail-soft flag（`"E"`/`"L"`/`"U"`）
+4. ✅ 增量候选点集合：`_candidates` + `_candidate_history`，undo 精确回滚
+6. ✅ 防守加权：对手威胁×1.5
+
+### 性能教训：numpy 不适合此场景
+- 尝试过将 `_score_for` 改写为 numpy 向量化版本（`np.diag` + `np.diff` + `np.where`）
+- 结果：速度变慢约 18 倍。原因：numpy 对 5–15 元素的小数组每次调用有 2–5 μs 固定开销，全局约 720 μs vs 原版 ~40 μs
+- 结论：**已回退到纯 Python 实现**；若要进一步加速评估，正确方向是**增量评估**（仅重算最后一手影响的若干条线），而非全局 numpy 向量化
+
+### 已知待改进项
+- **迭代加深**：可在时间预算内逐步加深，尚未实现
+- **杀手启发**：记住产生截断的着法，尚未实现
+- **增量评估**：`_score_for` 每次全盘扫描，可改为只重算受最后一手影响的行/列/对角线
+- **棋形评估**：尚未对双活四、双冲四、活四＋冲四进行精确判断
