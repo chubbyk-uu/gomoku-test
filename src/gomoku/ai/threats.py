@@ -9,6 +9,11 @@ from gomoku.config import Player
 
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 
+try:
+    from gomoku.ai._threat_kernels import quick_pattern_summary as _quick_pattern_summary_native
+except ImportError:  # pragma: no cover - exercised when extension is not built
+    _quick_pattern_summary_native = None
+
 
 class ThreatType(IntEnum):
     """Threat categories aligned with the evaluator's pattern language."""
@@ -62,6 +67,9 @@ def _quick_pattern_summary(
     player: Player,
 ) -> tuple[bool, bool, bool]:
     """Cheap local prefilter for strong tactical patterns around one move."""
+    if _quick_pattern_summary_native is not None:
+        return _quick_pattern_summary_native(board.grid, row, col, int(player))
+
     if board.grid[row, col] != Player.NONE:
         return False, False, False
 

@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
+src/gomoku/ai/_threat_kernels.c
 *.egg
 *.egg-info/
 dist/
