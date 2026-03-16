@@ -8,6 +8,12 @@ import numpy as np
 from gomoku.config import BOARD_SIZE, Player
 
 _CANDIDATE_RANGE = 2  # 候选点搜索半径
+_CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
+    (dr, dc)
+    for dr in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1)
+    for dc in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1)
+    if not (dr == 0 and dc == 0)
+)
 
 # Zobrist 哈希表：_ZOBRIST[row][col][player_index]，player_index: BLACK=0, WHITE=1
 # 固定随机种子保证每次进程内一致
@@ -59,29 +65,25 @@ class Board:
             return False
 
         # 计算候选点增量：落子前统计，确保 grid 尚未更新
-        removed: set[tuple[int, int]] = set()
-        if (row, col) in self._candidates:
-            removed.add((row, col))
-
+        grid = self.grid
+        candidates = self._candidates
+        removed: set[tuple[int, int]] = {(row, col)} if (row, col) in candidates else set()
         added: set[tuple[int, int]] = set()
-        for dr in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1):
-            for dc in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1):
-                if dr == 0 and dc == 0:
-                    continue
-                nr, nc = row + dr, col + dc
-                if (
-                    0 <= nr < BOARD_SIZE
-                    and 0 <= nc < BOARD_SIZE
-                    and self.grid[nr, nc] == Player.NONE
-                    and (nr, nc) not in self._candidates
-                ):
-                    added.add((nr, nc))
+        for dr, dc in _CANDIDATE_OFFSETS:
+            nr, nc = row + dr, col + dc
+            if (
+                0 <= nr < BOARD_SIZE
+                and 0 <= nc < BOARD_SIZE
+                and grid[nr, nc] == Player.NONE
+                and (nr, nc) not in candidates
+            ):
+                added.add((nr, nc))
 
-        self._candidates -= removed
-        self._candidates |= added
+        candidates.difference_update(removed)
+        candidates.update(added)
         self._candidate_history.append((added, removed))
 
-        self.grid[row, col] = player
+        grid[row, col] = player
         self.hash ^= _ZOBRIST[row][col][int(player) - 1]
         self.move_history.append((row, col, player))
         self.last_move = (row, col)
@@ -106,8 +108,9 @@ class Board:
 
         # 精确恢复候选点集合
         added, removed = self._candidate_history.pop()
-        self._candidates -= added
-        self._candidates |= removed
+        candidates = self._candidates
+        candidates.difference_update(added)
+        candidates.update(removed)
         if self._eval_state is not None:
             self._eval_state.on_board_changed(self, row, col)
 

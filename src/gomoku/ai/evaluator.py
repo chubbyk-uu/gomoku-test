@@ -399,20 +399,21 @@ class _BoardEvalState:
         self.line_counts: dict[Player, dict[tuple[int, int], tuple[int, ...]]] = {
             player: {} for player in _PLAYERS
         }
-        self.total_counts: dict[Player, tuple[int, ...]] = {
-            player: _ZERO_COUNTS for player in _PLAYERS
+        self.total_counts: dict[Player, list[int]] = {
+            player: list(_ZERO_COUNTS) for player in _PLAYERS
         }
         self._initialize(board)
 
     def _initialize(self, board: Board) -> None:
         for player in _PLAYERS:
-            total = _ZERO_COUNTS
+            total = list(_ZERO_COUNTS)
             for direction_index in range(len(_DIRECTIONS)):
                 max_line_id = BOARD_SIZE if direction_index < 2 else BOARD_SIZE * 2 - 1
                 for line_id in range(max_line_id):
                     counts = _count_shapes_on_line(board, player, direction_index, line_id)
                     self.line_counts[player][(direction_index, line_id)] = counts
-                    total = _tuple_add(total, counts)
+                    for idx, value in enumerate(counts):
+                        total[idx] += value
             self.total_counts[player] = total
 
     def on_board_changed(self, board: Board, row: int, col: int) -> None:
@@ -424,10 +425,11 @@ class _BoardEvalState:
                 old_counts = self.line_counts[player][key]
                 new_counts = _count_shapes_on_line(board, player, direction_index, line_id)
                 if new_counts != old_counts:
-                    total = _tuple_sub(total, old_counts)
-                    total = _tuple_add(total, new_counts)
+                    for idx, old_value in enumerate(old_counts):
+                        total[idx] -= old_value
+                    for idx, new_value in enumerate(new_counts):
+                        total[idx] += new_value
                     self.line_counts[player][key] = new_counts
-            self.total_counts[player] = total
 
 
 def _ensure_eval_state(board: Board) -> _BoardEvalState:
@@ -441,7 +443,7 @@ def _ensure_eval_state(board: Board) -> _BoardEvalState:
 def _count_shapes(board: Board, player: Player) -> dict[Shape, int]:
     """统计一方在棋盘上的所有棋型数量。"""
     state = _ensure_eval_state(board)
-    return _tuple_to_counts(state.total_counts[player])
+    return _tuple_to_counts(tuple(state.total_counts[player]))
 
 
 def _calc_total(counts: dict[Shape, int]) -> int:
