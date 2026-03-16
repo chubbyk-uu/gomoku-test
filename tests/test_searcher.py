@@ -242,6 +242,52 @@ def test_select_search_moves_blocks_opponent_win_before_own_double_threat():
     assert move == (9, 10)
 
 
+def test_minimax_blocks_opponent_win_before_forcing_attack():
+    """对手已有一步赢点时，不应被 forcing search 抢先短路。"""
+    board = Board()
+    for row, col in (
+        (5, 8),
+        (6, 3),
+        (6, 4),
+        (6, 6),
+        (6, 7),
+        (6, 9),
+        (7, 6),
+        (7, 7),
+        (7, 11),
+        (8, 3),
+        (8, 5),
+        (8, 6),
+        (8, 11),
+        (9, 6),
+        (9, 7),
+        (9, 8),
+    ):
+        board.place(row, col, Player.BLACK)
+    for row, col in (
+        (4, 9),
+        (5, 6),
+        (6, 8),
+        (7, 4),
+        (7, 8),
+        (7, 10),
+        (8, 7),
+        (8, 8),
+        (8, 9),
+        (8, 10),
+        (9, 4),
+        (9, 9),
+        (10, 6),
+        (10, 8),
+        (10, 9),
+    ):
+        board.place(row, col, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=5)
+
+    assert searcher.find_best_move(board) == (6, 5)
+
+
 def test_select_search_moves_prioritizes_open_four(monkeypatch):
     """阶段 2 接入后，OPEN_FOUR 应直接作为最高优先级候选返回。"""
     board = Board()

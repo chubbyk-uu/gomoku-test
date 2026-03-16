@@ -479,6 +479,7 @@ class AISearcher:
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
+        opponent_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
         defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
@@ -518,7 +519,8 @@ class AISearcher:
                 return self._prioritize_tt_move(threat_moves, tt_move)
 
         opponent = self.ai_player if current_player == self._opponent else self._opponent
-        opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
+        if opponent_move_analysis is None:
+            opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
             ordered_blocks = sorted(blocking_moves)
@@ -670,12 +672,17 @@ class AISearcher:
             self._store_tt(self._tt, h, (depth, score, "E", winning_move))
             return score, winning_move
 
-        forcing_move = self._find_forcing_move(board, current_player)
-        if forcing_move is not None:
-            stats.forcing_wins += 1
-            score = 90_000.0 if maximizing else -90_000.0
-            self._store_tt(self._tt, h, (depth, score, "E", forcing_move))
-            return score, forcing_move
+        opponent = self._opponent_of(current_player)
+        opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
+        opponent_winning_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
+
+        if not opponent_winning_moves:
+            forcing_move = self._find_forcing_move(board, current_player)
+            if forcing_move is not None:
+                stats.forcing_wins += 1
+                score = 90_000.0 if maximizing else -90_000.0
+                self._store_tt(self._tt, h, (depth, score, "E", forcing_move))
+                return score, forcing_move
 
         # --- 威胁驱动候选生成 + 动态截断 ---
         moves = self._select_search_moves(
@@ -685,6 +692,7 @@ class AISearcher:
             tt_move,
             stats,
             current_move_analysis=current_move_analysis,
+            opponent_move_analysis=opponent_move_analysis,
         )
 
         best_move: Optional[tuple[int, int]] = None
