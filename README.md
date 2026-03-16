@@ -1,32 +1,38 @@
 # 五子棋 (Gomoku)
 
-基于 `Pygame` 的五子棋人机对弈项目。AI 使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表与迭代加深搜索，支持固定最大深度和可选限时搜索。
+基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、威胁分类、短 forcing search，以及若干 `Cython` 热点加速。
 
 ## 当前状态
 
 - 15×15 标准棋盘，黑棋先手
 - 支持人机对弈，玩家可选执黑或执白
-- AI 默认配置：
-  - 最大搜索深度：`4`
+- 支持悔棋：一次撤回玩家和 AI 各一步
+- 支持固定题库回归、搜索 profiling、自对弈 benchmark
+- 当前默认 AI 配置：
+  - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`15`
-- 支持悔棋：一次撤回玩家和 AI 各一步
-- 支持 benchmark 自对弈和搜索统计输出
+  - 候选邻域半径：`2`
 
 ## 主要特性
 
 - `Minimax + Alpha-Beta` 剪枝
-- 候选点排序（move ordering）
-- 置换表（Transposition Table, Zobrist Hash）
-- 评估缓存
 - 迭代加深（Iterative Deepening）
-- PV 优先搜索
+- Zobrist 哈希置换表（TT）
+- 评估缓存
+- 候选点动态截断与两阶段排序
+- 威胁分类与短 forcing search
 - 一步成五预检查
+- 增量候选点维护
+- 增量评估状态缓存
+- `Cython` 热点内核（threat / move analysis / line counting）
 - 最后一手高亮显示
 
 ## 安装
 
 环境要求：`Python 3.10+`
+
+推荐安装开发依赖：
 
 ```bash
 pip install -e ".[dev]"
@@ -37,6 +43,14 @@ pip install -e ".[dev]"
 ```bash
 pip install pygame numpy
 ```
+
+如需启用 `Cython` 扩展的本地构建：
+
+```bash
+python setup.py build_ext --inplace
+```
+
+未构建扩展时会自动回退到纯 Python 实现。
 
 ## 运行
 
@@ -69,10 +83,14 @@ python -m gomoku
 
 AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/searcher.py)。
 
-- 迭代加深从 `depth=1` 逐层加深到最大深度
-- 如果设置了时间上限，则在超时前返回最后一层完整搜索结果
-- 置换表缓存历史局面的搜索结果
-- 上一轮最佳着法会通过 TT/PV 优先在下一轮提前搜索
+当前搜索流程大致包括：
+
+- 迭代加深，从 `depth=1` 逐层加深到最大深度
+- 置换表复用历史搜索结果
+- 一步成五预检查
+- 短 forcing search
+- 威胁优先候选生成
+- 普通候选的局部粗排、动态截断、精排
 
 ### 评估函数
 
@@ -92,7 +110,32 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 
 - 组合威胁加分
 - 防守权重
-- 对局面两方的净分评估
+- 局面净分评估
+- 增量线计数缓存
+
+### 威胁分类
+
+威胁分类位于 [src/gomoku/ai/threats.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/threats.py)。
+
+当前会识别和使用的核心类别包括：
+
+- `WIN`
+- `OPEN_FOUR`
+- `DOUBLE_HALF_FOUR`
+- `FOUR_THREE`
+- `DOUBLE_OPEN_THREE`
+- `HALF_FOUR`
+- `OPEN_THREE`
+
+### Cython 热点
+
+热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
+
+当前已下沉的热点包括：
+
+- 局部 quick pattern summary
+- 单点 move analysis
+- 单线 shape counting
 
 ## 项目结构
 
@@ -104,35 +147,94 @@ gomoku-test/
 │   ├── board.py
 │   ├── game.py
 │   ├── ai/
+│   │   ├── _threat_kernels.pyx
 │   │   ├── evaluator.py
-│   │   └── searcher.py
+│   │   ├── puzzles.py
+│   │   ├── searcher.py
+│   │   └── threats.py
 │   └── ui/
 │       └── renderer.py
 ├── tests/
+│   ├── test_benchmark.py
 │   ├── test_board.py
 │   ├── test_evaluator.py
-│   └── test_searcher.py
-└── tools/
-    ├── benchmark.py
-    └── run_benchmark.py
+│   ├── test_puzzles.py
+│   ├── test_searcher.py
+│   └── test_threats.py
+├── tools/
+│   ├── benchmark.py
+│   ├── engine_worker.py
+│   ├── run_benchmark.py
+│   └── run_puzzle_benchmark.py
+└── setup.py
 ```
 
-## Benchmark
+## 固定题库
 
-运行自对弈 benchmark：
+固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
+
+- 一步杀
+- 必防冲四
+- 主动做活四
+- 防双活三
+- 防活跳三 + 活三
+- 主动做双活三
+- 普通中盘连接点
+- judgment 类真实/构造局面
+
+运行题库 benchmark：
+
+```bash
+PYTHONPATH=src python tools/run_puzzle_benchmark.py --depth 4 --repeat 1
+```
+
+只跑某一类题：
+
+```bash
+PYTHONPATH=src python tools/run_puzzle_benchmark.py --depth 4 --category judgment
+```
+
+## 自对弈 Benchmark
+
+运行本地自对弈 benchmark：
 
 ```bash
 PYTHONPATH=src python tools/run_benchmark.py --depth-a 4 --depth-b 4 --games 4 --quiet
 ```
 
-输出内容包括：
+可选参数：
 
-- 胜负和平均用时
-- 每步平均搜索节点数
-- 叶子评估次数
-- 排序阶段评估次数
-- TT 命中和剪枝统计
-- 平均分支因子
+- `--seed`：固定随机种子，便于复现
+- `--save-json PATH`：保存每局走子记录和汇总结果
+- `--max-moves N`：超过 `N` 手判和，避免长局拖太久
+
+例如：
+
+```bash
+PYTHONPATH=src python tools/run_benchmark.py \
+  --depth-a 4 --depth-b 4 \
+  --games 4 --quiet \
+  --seed 7 \
+  --max-moves 60 \
+  --save-json /tmp/gomoku_selfplay.json
+```
+
+### 跨版本对弈
+
+benchmark 还支持不同 `repo/worktree` 对打：
+
+```bash
+PYTHONPATH=src python tools/run_benchmark.py \
+  --depth-a 3 --depth-b 3 \
+  --games 2 --quiet \
+  --seed 7 \
+  --max-moves 40 \
+  --repo-a /path/to/worktree-A \
+  --repo-b /path/to/worktree-B \
+  --save-json /tmp/gomoku_compare.json
+```
+
+这适合做不同 commit 之间的 head-to-head 对比。
 
 ## 开发
 
@@ -142,28 +244,36 @@ PYTHONPATH=src python tools/run_benchmark.py --depth-a 4 --depth-b 4 --games 4 -
 pytest -q
 ```
 
-单测当前覆盖：
+运行 lint：
+
+```bash
+ruff check .
+```
+
+单测当前主要覆盖：
 
 - 棋盘落子、悔棋、胜负判断、候选点维护
-- 评估器棋型识别
+- 评估器棋型识别与增量计数
 - 搜索结果稳定性
 - TT / 缓存复用
-- 迭代加深与限时回退
-- 超时场景下模拟落子回滚
+- 题库回归
+- benchmark JSON 输出
 
 ## 可调参数
 
 配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/config.py)。
 
 ```python
-AI_SEARCH_DEPTH = 4
-AI_SEARCH_TIME_LIMIT_S = 3.0
+AI_SEARCH_DEPTH = 5
+AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 15
+AI_CANDIDATE_RANGE = 2
 AI_MOVE_DELAY_MS = 100
 ```
 
 建议：
 
-- 想要更快响应：降低 `AI_SEARCH_TIME_LIMIT_S`
-- 想要更强棋力：提高 `AI_SEARCH_DEPTH`，但耗时会明显增加
-- 如果只是想减少体感等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
+- 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
+- 想要更强棋力：优先改搜索策略/威胁处理，其次再提高深度
+- 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
+- `AI_CANDIDATE_RANGE` 先保持 `2`，除非结合题库和 benchmark 做 A/B 验证
