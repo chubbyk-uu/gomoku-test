@@ -115,7 +115,7 @@ class Board:
     def check_win(self, row: int, col: int) -> bool:
         """检查 (row, col) 处的棋子是否构成五连珠。
 
-        利用 numpy 切片提取行、列和对角线，再统计该位置的连续段长度。
+        通过四个方向的双向扩展，统计该棋子所在连续段长度。
 
         Args:
             row: 行坐标。
@@ -128,36 +128,26 @@ class Board:
         if player_val == Player.NONE:
             return False
 
-        def _run_length(line: np.ndarray, pos: int) -> int:
-            """计算 line[pos] 所在连续同色段的长度。"""
-            mask: np.ndarray = line == player_val
-            start = pos
-            while start > 0 and mask[start - 1]:
-                start -= 1
-            end = pos + 1
-            while end < len(line) and mask[end]:
-                end += 1
-            return end - start
+        def _count_direction(dr: int, dc: int) -> int:
+            length = 1
 
-        # 水平
-        if _run_length(self.grid[row, :], col) >= 5:
-            return True
-        # 垂直
-        if _run_length(self.grid[:, col], row) >= 5:
-            return True
-        # 主对角线 (\)
-        diag_k = col - row
-        diag = np.diag(self.grid, diag_k)
-        diag_pos = min(row, col)
-        if _run_length(diag, diag_pos) >= 5:
-            return True
-        # 反对角线 (/)
-        anti_col = BOARD_SIZE - 1 - col
-        anti_k = anti_col - row
-        anti_diag = np.diag(np.fliplr(self.grid), anti_k)
-        anti_pos = min(row, anti_col)
-        if _run_length(anti_diag, anti_pos) >= 5:
-            return True
+            r, c = row + dr, col + dc
+            while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and self.grid[r, c] == player_val:
+                length += 1
+                r += dr
+                c += dc
+
+            r, c = row - dr, col - dc
+            while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and self.grid[r, c] == player_val:
+                length += 1
+                r -= dr
+                c -= dc
+
+            return length
+
+        for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+            if _count_direction(dr, dc) >= 5:
+                return True
         return False
 
     def get_candidate_moves(self) -> list[tuple[int, int]]:

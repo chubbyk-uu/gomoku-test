@@ -82,6 +82,20 @@ def test_check_win_antidiagonal():
     assert board.check_win(4, 0) is True
 
 
+def test_check_win_detects_middle_of_five():
+    board = Board()
+    for col in range(3, 8):
+        board.place(7, col, Player.BLACK)
+    assert board.check_win(7, 5) is True
+
+
+def test_check_win_antidiagonal_at_board_edge():
+    board = Board()
+    for i in range(5):
+        board.place(BOARD_SIZE - 1 - i, i, Player.WHITE)
+    assert board.check_win(BOARD_SIZE - 3, 2) is True
+
+
 def test_check_win_four_not_win():
     board = Board()
     for col in range(4):

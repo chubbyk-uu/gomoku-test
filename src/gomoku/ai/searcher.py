@@ -12,6 +12,8 @@ from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_S
 # 置换表条目：(depth, score, flag, best_move)
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
+_DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
+_ORDERING_RERANK_TOP_K = 8
 
 
 @dataclass
@@ -147,22 +149,208 @@ class AISearcher:
         if self._deadline is not None and time.perf_counter() >= self._deadline:
             raise SearchTimeout
 
-    def _find_immediate_winning_move(
+    def _is_immediate_winning_move(
+        self,
+        board: Board,
+        row: int,
+        col: int,
+        current_player: Player,
+    ) -> bool:
+        """仅基于落点周围四个方向，判断该空位是否一步成五。"""
+        if board.grid[row, col] != Player.NONE:
+            return False
+
+        for dr, dc in _DIRECTIONS:
+            left_len, _ = self._count_one_side(board, row, col, -dr, -dc, current_player)
+            right_len, _ = self._count_one_side(board, row, col, dr, dc, current_player)
+            if 1 + left_len + right_len >= 5:
+                return True
+        return False
+
+    def _find_immediate_winning_moves(
         self,
         board: Board,
         moves: list[tuple[int, int]],
         current_player: Player,
-    ) -> Optional[tuple[int, int]]:
-        """检查候选点中是否存在一步直接成五的着法。"""
-        for row, col in moves:
+    ) -> list[tuple[int, int]]:
+        """返回候选点中所有一步直接成五的着法。"""
+        return [
+            (row, col)
+            for row, col in moves
+            if self._is_immediate_winning_move(board, row, col, current_player)
+        ]
+
+    @staticmethod
+    def _line_tactical_score(length: int, open_ends: int) -> int:
+        """对单方向连子形状给出轻量分值，用于候选排序。"""
+        if length >= 5:
+            return 200_000
+        if length == 4:
+            return 80_000 if open_ends == 2 else 30_000 if open_ends == 1 else 0
+        if length == 3:
+            return 8_000 if open_ends == 2 else 2_000 if open_ends == 1 else 0
+        if length == 2:
+            return 500 if open_ends == 2 else 100 if open_ends == 1 else 0
+        if length == 1:
+            return 30 if open_ends == 2 else 5 if open_ends == 1 else 0
+        return 0
+
+    @staticmethod
+    def _count_one_side(
+        board: Board,
+        row: int,
+        col: int,
+        dr: int,
+        dc: int,
+        player: Player,
+    ) -> tuple[int, bool]:
+        """统计某一侧连续棋子数量，以及末端是否仍为空。"""
+        grid = board.grid
+        r, c = row + dr, col + dc
+        length = 0
+        while 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == player:
+            length += 1
+            r += dr
+            c += dc
+        is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
+        return length, is_open
+
+    def _score_potential_move(self, board: Board, row: int, col: int, player: Player) -> int:
+        """基于落点附近四个方向的局部形状，对空位做轻量战术评分。"""
+        if board.grid[row, col] != Player.NONE:
+            return -1
+
+        directional_scores: list[int] = []
+        for dr, dc in _DIRECTIONS:
+            left_len, left_open = self._count_one_side(board, row, col, -dr, -dc, player)
+            right_len, right_open = self._count_one_side(board, row, col, dr, dc, player)
+            total_len = 1 + left_len + right_len
+            open_ends = int(left_open) + int(right_open)
+            directional_scores.append(self._line_tactical_score(total_len, open_ends))
+
+        directional_scores.sort(reverse=True)
+        total_score = sum(directional_scores)
+        if len(directional_scores) >= 2:
+            total_score += directional_scores[0] * directional_scores[1] // 20_000
+
+        # 轻微偏向中心，减少同分时边缘点无意义靠前。
+        center = board.grid.shape[0] // 2
+        center_bias = 2 * board.grid.shape[0] - abs(row - center) - abs(col - center)
+        return total_score + center_bias
+
+    def _score_ordering_move(
+        self,
+        board: Board,
+        row: int,
+        col: int,
+        current_player: Player,
+    ) -> tuple[int, int, int]:
+        """返回综合排序分，以及进攻/防守分量。"""
+        opponent = self.ai_player if current_player == self._opponent else self._opponent
+        attack_score = self._score_potential_move(board, row, col, current_player)
+        defense_score = self._score_potential_move(board, row, col, opponent)
+        return attack_score * 2 + defense_score * 3, attack_score, defense_score
+
+    @staticmethod
+    def _dynamic_cutoff(
+        scored_moves: list[tuple[int, int, int, int, int]],
+        max_candidates: int,
+    ) -> int:
+        """按局面强度动态决定截断宽度。"""
+        if not scored_moves:
+            return 0
+
+        limit = min(len(scored_moves), max_candidates)
+        top_score = scored_moves[0][2]
+        if limit <= 4:
+            return limit
+
+        if top_score >= 150_000:
+            cutoff = 4
+        elif top_score >= 60_000:
+            cutoff = 6
+        elif top_score >= 12_000:
+            cutoff = 8
+        elif top_score >= 2_000:
+            cutoff = 10
+        else:
+            cutoff = limit
+
+        cutoff = min(cutoff, limit)
+        if cutoff >= limit:
+            return limit
+
+        gap = max(500, top_score // 5)
+        while cutoff < limit and top_score - scored_moves[cutoff][2] <= gap:
+            cutoff += 1
+        return cutoff
+
+    def _select_search_moves(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+        current_player: Player,
+        tt_move: Optional[tuple[int, int]],
+        stats: SearchStats,
+    ) -> list[tuple[int, int]]:
+        """分层生成候选点，并对普通局面执行动态截断。"""
+        opponent = self.ai_player if current_player == self._opponent else self._opponent
+        blocking_moves = self._find_immediate_winning_moves(board, moves, opponent)
+        if blocking_moves:
+            ordered_blocks = sorted(blocking_moves)
+            return self._prioritize_tt_move(ordered_blocks, tt_move)
+
+        scored_moves: list[tuple[int, int, int, int, int]] = []
+        for r, c in moves:
+            self._check_timeout()
+            stats.ordering_evals += 1
+            total_score, attack_score, defense_score = self._score_ordering_move(
+                board, r, c, current_player
+            )
+            scored_moves.append((r, c, total_score, attack_score, defense_score))
+
+        scored_moves.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
+
+        threat_moves = [
+            (r, c)
+            for r, c, _, attack_score, defense_score in scored_moves
+            if attack_score >= 30_000 or defense_score >= 30_000
+        ]
+        if threat_moves:
+            return self._prioritize_tt_move(threat_moves[: min(len(threat_moves), 6)], tt_move)
+
+        cutoff = self._dynamic_cutoff(scored_moves, AI_MAX_CANDIDATES)
+        selected_moves = scored_moves[:cutoff]
+        rerank_limit = min(len(selected_moves), _ORDERING_RERANK_TOP_K)
+        reranked = self._rerank_top_moves(
+            board, selected_moves, rerank_limit, current_player, stats
+        )
+        return self._prioritize_tt_move([(r, c) for r, c, _, _, _ in reranked], tt_move)
+
+    def _rerank_top_moves(
+        self,
+        board: Board,
+        scored_moves: list[tuple[int, int, int, int, int]],
+        rerank_limit: int,
+        current_player: Player,
+        stats: SearchStats,
+    ) -> list[tuple[int, int, int, int, int]]:
+        """对粗排前若干候选做完整局面评估，提升排序质量。"""
+        if rerank_limit <= 1:
+            return scored_moves
+
+        reranked_prefix: list[tuple[int, int, int, int, int]] = []
+        for row, col, coarse_score, attack_score, defense_score in scored_moves[:rerank_limit]:
+            self._check_timeout()
             board.place(row, col, current_player)
             try:
-                is_win = board.check_win(row, col)
+                exact_score = self._evaluate(board)
             finally:
                 board.undo()
-            if is_win:
-                return row, col
-        return None
+            reranked_prefix.append((row, col, exact_score, attack_score, defense_score))
+
+        reranked_prefix.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
+        return reranked_prefix + scored_moves[rerank_limit:]
 
     @staticmethod
     def _prioritize_tt_move(
@@ -252,28 +440,16 @@ class AISearcher:
         tt_move = entry[3] if entry is not None else None
 
         # --- 候选点预检查：若当前走子方存在一步直接成五，则无需再做完整排序 ---
-        winning_move = self._find_immediate_winning_move(board, moves, current_player)
-        if winning_move is not None:
+        winning_moves = self._find_immediate_winning_moves(board, moves, current_player)
+        if winning_moves:
             stats.immediate_wins += 1
+            winning_move = winning_moves[0]
             score = 100_000.0 if maximizing else -100_000.0
             self._store_tt(self._tt, h, (depth, score, "E", winning_move))
             return score, winning_move
 
-        # --- 候选点排序：模拟落子后快速评估，按对当前方有利程度降序排列；截断到前 N 个 ---
-        scored_moves: list[tuple[int, int, int]] = []
-        for r, c in moves:
-            self._check_timeout()
-            board.place(r, c, current_player)
-            try:
-                stats.ordering_evals += 1
-                score = self._evaluate(board)
-            finally:
-                board.undo()
-            scored_moves.append((r, c, score))
-        # 坐标作为 tiebreaker 保证排序稳定（set 迭代顺序不确定）
-        scored_moves.sort(key=lambda x: (x[2], x[0], x[1]), reverse=maximizing)
-        moves = [(r, c) for r, c, _ in scored_moves[:AI_MAX_CANDIDATES]]
-        moves = self._prioritize_tt_move(moves, tt_move)
+        # --- 威胁驱动候选生成 + 动态截断 ---
+        moves = self._select_search_moves(board, moves, current_player, tt_move, stats)
 
         best_move: Optional[tuple[int, int]] = None
 

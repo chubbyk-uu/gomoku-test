@@ -159,6 +159,138 @@ def test_prioritize_tt_move_only_reorders_existing_candidate():
     assert searcher._prioritize_tt_move(moves, (9, 9)) == moves
 
 
+def test_find_immediate_winning_moves_returns_all_wins():
+    """开放四应识别出两端的全部一步成五点。"""
+    board = Board()
+    for col in range(4, 8):
+        board.place(7, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    moves = board.get_candidate_moves()
+
+    assert set(searcher._find_immediate_winning_moves(board, moves, Player.BLACK)) == {
+        (7, 3),
+        (7, 8),
+    }
+
+
+def test_is_immediate_winning_move_handles_edge_blocked_four():
+    """边界封堵的冲四也应识别出唯一成五点。"""
+    board = Board()
+    for col in range(4):
+        board.place(0, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.BLACK)
+
+    assert searcher._is_immediate_winning_move(board, 0, 4, Player.BLACK) is True
+    assert searcher._is_immediate_winning_move(board, 1, 4, Player.BLACK) is False
+
+
+def test_find_immediate_winning_moves_does_not_modify_board():
+    """局部一步成五检测不应修改棋盘状态。"""
+    board = Board()
+    for col in range(4, 8):
+        board.place(7, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    history_before = board.move_history.copy()
+    hash_before = board.hash
+    last_move_before = board.last_move
+
+    moves = searcher._find_immediate_winning_moves(
+        board, board.get_candidate_moves(), Player.BLACK
+    )
+
+    assert set(moves) == {(7, 3), (7, 8)}
+    assert board.move_history == history_before
+    assert board.hash == hash_before
+    assert board.last_move == last_move_before
+
+
+def test_select_search_moves_restricts_to_blocks_against_immediate_loss():
+    """若对手下一手可直接获胜，候选点应缩到防点集合。"""
+    board = Board()
+    for col in range(4):
+        board.place(0, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.WHITE)
+    stats = searcher.last_search_stats
+    moves = searcher._select_search_moves(
+        board,
+        board.get_candidate_moves(),
+        Player.WHITE,
+        tt_move=None,
+        stats=stats,
+    )
+
+    assert moves == [(0, 4)]
+    assert stats.ordering_evals == 0
+
+
+def test_dynamic_cutoff_shrinks_for_critical_scores():
+    """强威胁分数应触发更窄的动态截断。"""
+    scored_moves = [
+        (7, 7, 180_000, 100_000, 20_000),
+        (7, 8, 178_000, 95_000, 20_000),
+        (8, 7, 176_000, 90_000, 20_000),
+        (8, 8, 174_000, 85_000, 20_000),
+        (6, 7, 172_000, 80_000, 20_000),
+        (6, 8, 120_000, 50_000, 20_000),
+    ]
+
+    assert AISearcher._dynamic_cutoff(scored_moves, max_candidates=15) == 5
+
+
+def test_rerank_top_moves_uses_full_evaluation_for_prefix(monkeypatch):
+    """两阶段排序应允许完整评估重排粗排前缀。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    scored_moves = [
+        (7, 7, 100, 50, 10),
+        (7, 8, 90, 40, 10),
+        (8, 7, 80, 30, 10),
+    ]
+    exact_scores = {(7, 7): 1, (7, 8): 5, (8, 7): 3}
+
+    def fake_evaluate(current_board: Board) -> int:
+        assert current_board.last_move is not None
+        return exact_scores[current_board.last_move]
+
+    monkeypatch.setattr(searcher, "_evaluate", fake_evaluate)
+
+    reranked = searcher._rerank_top_moves(
+        board,
+        scored_moves,
+        rerank_limit=3,
+        current_player=Player.BLACK,
+        stats=searcher.last_search_stats,
+    )
+
+    assert [move[:2] for move in reranked] == [(7, 8), (8, 7), (7, 7)]
+
+
+def test_rerank_top_moves_keeps_suffix_order():
+    """精排只应重排前缀，后缀顺序保持原粗排结果。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    scored_moves = [
+        (7, 7, 100, 50, 10),
+        (7, 8, 90, 40, 10),
+        (8, 7, 80, 30, 10),
+        (8, 8, 70, 20, 10),
+    ]
+
+    reranked = searcher._rerank_top_moves(
+        board,
+        scored_moves,
+        rerank_limit=1,
+        current_player=Player.BLACK,
+        stats=searcher.last_search_stats,
+    )
+
+    assert reranked == scored_moves
+
+
 def test_search_stats_populated_after_search():
     """搜索完成后应暴露本次搜索统计。"""
     board = Board()
