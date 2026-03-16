@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gomoku.ai.evaluator import evaluate
-from gomoku.ai.threats import ThreatType, classify_moves
+from gomoku.ai.threats import (
+    ThreatType,
+    classify_attack_moves,
+    classify_defense_moves,
+    classify_moves,
+)
 from gomoku.board import Board
 from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
 
@@ -76,6 +81,7 @@ class AISearcher:
         self._opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
         self._tt: dict[int, _TTEntry] = {}
         self._eval_cache: dict[int, int] = {}
+        self._threat_cache: dict[tuple[int, int, str], list] = {}
         self.last_search_stats = SearchStats()
         self._deadline: Optional[float] = None
 
@@ -153,6 +159,29 @@ class AISearcher:
         """Raise when the configured time budget has been exhausted."""
         if self._deadline is not None and time.perf_counter() >= self._deadline:
             raise SearchTimeout
+
+    def _classify_moves_cached(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+        player: Player,
+        mode: str = "both",
+    ) -> list:
+        """Cache threat classification per board hash and side to avoid recomputation."""
+        key = (board.hash, int(player), mode)
+        cached = self._threat_cache.get(key)
+        if cached is not None:
+            return cached
+        if mode == "attack":
+            classified = classify_attack_moves(board, moves, player)
+        elif mode == "defense":
+            classified = classify_defense_moves(board, moves, player)
+        else:
+            classified = classify_moves(board, moves, player)
+        if len(self._threat_cache) >= AI_EVAL_CACHE_MAX_SIZE:
+            self._threat_cache.clear()
+        self._threat_cache[key] = classified
+        return classified
 
     @staticmethod
     def _line_tactical_score(length: int, open_ends: int) -> int:
@@ -272,12 +301,20 @@ class AISearcher:
     @staticmethod
     def _forcing_move_priority(threat_type: ThreatType) -> int:
         if threat_type == ThreatType.WIN:
-            return 4
-        if threat_type == ThreatType.OPEN_FOUR:
-            return 3
-        if threat_type == ThreatType.FOUR_THREE:
-            return 2
+            return 8
         if threat_type == ThreatType.BLOCK_WIN:
+            return 7
+        if threat_type == ThreatType.OPEN_FOUR:
+            return 6
+        if threat_type == ThreatType.DOUBLE_HALF_FOUR:
+            return 5
+        if threat_type == ThreatType.FOUR_THREE:
+            return 4
+        if threat_type == ThreatType.DOUBLE_OPEN_THREE:
+            return 3
+        if threat_type == ThreatType.HALF_FOUR:
+            return 2
+        if threat_type == ThreatType.OPEN_THREE:
             return 1
         return 0
 
@@ -288,20 +325,45 @@ class AISearcher:
         attacker: Player,
     ) -> list[tuple[tuple[int, int], ThreatType]]:
         """Return threat-ranked candidates for forcing search."""
-        infos = classify_moves(board, board.get_candidate_moves(), player)
+        mode = "attack" if player == attacker else "defense"
+        infos = self._classify_moves_cached(board, board.get_candidate_moves(), player, mode=mode)
         if player == attacker:
-            allowed = {ThreatType.WIN, ThreatType.OPEN_FOUR, ThreatType.FOUR_THREE}
+            allowed = {
+                ThreatType.WIN,
+                ThreatType.OPEN_FOUR,
+                ThreatType.DOUBLE_HALF_FOUR,
+                ThreatType.HALF_FOUR,
+                ThreatType.DOUBLE_OPEN_THREE,
+                ThreatType.FOUR_THREE,
+                ThreatType.OPEN_THREE,
+            }
+            candidates = [
+                (info.move, info.attack_type) for info in infos if info.attack_type in allowed
+            ]
         else:
             allowed = {
                 ThreatType.WIN,
-                ThreatType.BLOCK_WIN,
                 ThreatType.OPEN_FOUR,
+                ThreatType.DOUBLE_HALF_FOUR,
+                ThreatType.HALF_FOUR,
+                ThreatType.DOUBLE_OPEN_THREE,
                 ThreatType.FOUR_THREE,
+                ThreatType.OPEN_THREE,
             }
-
-        candidates = [
-            (info.move, info.threat_type) for info in infos if info.threat_type in allowed
-        ]
+            all_candidates = [
+                (info.move, info.defense_type) for info in infos if info.defense_type in allowed
+            ]
+            if not all_candidates:
+                return []
+            strongest = max(
+                self._forcing_move_priority(threat_type)
+                for _, threat_type in all_candidates
+            )
+            candidates = [
+                (move, threat_type)
+                for move, threat_type in all_candidates
+                if self._forcing_move_priority(threat_type) == strongest
+            ]
         candidates.sort(
             key=lambda item: (self._forcing_move_priority(item[1]), item[0][0], item[0][1]),
             reverse=True,
@@ -343,8 +405,6 @@ class AISearcher:
             return False, None
 
         for move, threat_type in candidates:
-            if threat_type == ThreatType.WIN:
-                return False, None
             board.place(*move, current_player)
             try:
                 success, _ = self._forcing_search(board, attacker, attacker, depth - 1)
@@ -412,20 +472,38 @@ class AISearcher:
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
-        threat_infos = classify_moves(board, moves, current_player)
-        grouped_moves: dict[ThreatType, list[tuple[int, int]]] = {
+        attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
         }
-        for info in threat_infos:
-            grouped_moves[info.threat_type].append(info.move)
+        for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
+            attack_grouped[info.attack_type].append(info.move)
 
         for threat_type in (
             ThreatType.WIN,
-            ThreatType.BLOCK_WIN,
             ThreatType.OPEN_FOUR,
+            ThreatType.DOUBLE_HALF_FOUR,
             ThreatType.FOUR_THREE,
+            ThreatType.DOUBLE_OPEN_THREE,
         ):
-            threat_moves = grouped_moves[threat_type]
+            threat_moves = attack_grouped[threat_type]
+            if threat_moves:
+                threat_moves.sort()
+                return self._prioritize_tt_move(threat_moves, tt_move)
+
+        defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
+            threat_type: [] for threat_type in ThreatType
+        }
+        for info in self._classify_moves_cached(board, moves, current_player, mode="defense"):
+            defense_grouped[info.defense_type].append(info.move)
+
+        for threat_type in (
+            ThreatType.WIN,
+            ThreatType.OPEN_FOUR,
+            ThreatType.DOUBLE_HALF_FOUR,
+            ThreatType.FOUR_THREE,
+            ThreatType.DOUBLE_OPEN_THREE,
+        ):
+            threat_moves = defense_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
                 return self._prioritize_tt_move(threat_moves, tt_move)

@@ -234,15 +234,27 @@ def test_select_search_moves_prioritizes_open_four(monkeypatch):
     searcher = _make_searcher(ai_player=Player.BLACK)
     candidate_moves = [(7, 7), (7, 8), (8, 8)]
 
-    monkeypatch.setattr(
-        searcher_module,
-        "classify_moves",
-        lambda _board, _moves, _player: [
-            ThreatInfo((7, 7), ThreatType.OTHER, 100, 10),
-            ThreatInfo((7, 8), ThreatType.OPEN_FOUR, 80_000, 100),
-            ThreatInfo((8, 8), ThreatType.OTHER, 100, 10),
-        ],
-    )
+    def fake_classify(_board, _moves, _player, mode="both"):
+        if mode == "attack":
+            return [
+                ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+                ThreatInfo(
+                    (7, 8),
+                    ThreatType.OPEN_FOUR,
+                    ThreatType.OPEN_FOUR,
+                    ThreatType.OTHER,
+                    80_000,
+                    0,
+                ),
+                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+            ]
+        return [
+            ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+            ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 100),
+            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+        ]
+
+    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
 
     moves = searcher._select_search_moves(
         board,
@@ -261,15 +273,66 @@ def test_select_search_moves_prioritizes_four_three(monkeypatch):
     searcher = _make_searcher(ai_player=Player.BLACK)
     candidate_moves = [(7, 7), (7, 8), (8, 8)]
 
-    monkeypatch.setattr(
-        searcher_module,
-        "classify_moves",
-        lambda _board, _moves, _player: [
-            ThreatInfo((7, 7), ThreatType.OTHER, 100, 10),
-            ThreatInfo((7, 8), ThreatType.FOUR_THREE, 10_000, 100),
-            ThreatInfo((8, 8), ThreatType.OTHER, 100, 10),
-        ],
+    def fake_classify(_board, _moves, _player, mode="both"):
+        if mode == "attack":
+            return [
+                ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+                ThreatInfo(
+                    (7, 8),
+                    ThreatType.FOUR_THREE,
+                    ThreatType.FOUR_THREE,
+                    ThreatType.OTHER,
+                    10_000,
+                    0,
+                ),
+                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+            ]
+        return [
+            ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+            ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 100),
+            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+        ]
+
+    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
+
+    moves = searcher._select_search_moves(
+        board,
+        candidate_moves,
+        Player.BLACK,
+        tt_move=None,
+        stats=searcher.last_search_stats,
     )
+
+    assert moves == [(7, 8)]
+
+
+def test_select_search_moves_prioritizes_double_open_three(monkeypatch):
+    """DOUBLE_OPEN_THREE 应作为高优先级威胁候选直接返回。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    candidate_moves = [(7, 7), (7, 8), (8, 8)]
+
+    def fake_classify(_board, _moves, _player, mode="both"):
+        if mode == "attack":
+            return [
+                ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+                ThreatInfo(
+                    (7, 8),
+                    ThreatType.DOUBLE_OPEN_THREE,
+                    ThreatType.DOUBLE_OPEN_THREE,
+                    ThreatType.OTHER,
+                    16_000,
+                    0,
+                ),
+                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+            ]
+        return [
+            ThreatInfo((7, 7), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+            ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 100),
+            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+        ]
+
+    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
 
     moves = searcher._select_search_moves(
         board,
@@ -357,7 +420,7 @@ def test_find_forcing_move_detects_open_four_sequence():
 
     searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
 
-    assert searcher._find_forcing_move(board, Player.BLACK) == (7, 7)
+    assert searcher._find_forcing_move(board, Player.BLACK) in {(7, 3), (7, 7)}
 
 
 def test_find_forcing_move_returns_none_without_forcing_line():
@@ -383,7 +446,7 @@ def test_forcing_search_updates_stats_when_used():
     searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
     move = searcher.find_best_move(board)
 
-    assert move == (7, 7)
+    assert move in {(7, 3), (7, 7)}
     assert searcher.last_search_stats.forcing_wins >= 1
 
 
