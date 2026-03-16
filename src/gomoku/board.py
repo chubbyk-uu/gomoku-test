@@ -33,6 +33,7 @@ class Board:
         self.move_history: list[tuple[int, int, Player]] = []
         self.last_move: Optional[tuple[int, int]] = None
         self.hash: int = 0
+        self._eval_state: object | None = None
         # 增量候选点集合，及每步的增删记录（用于 undo 精确恢复）
         self._candidates: set[tuple[int, int]] = set()
         self._candidate_history: list[tuple[set[tuple[int, int]], set[tuple[int, int]]]] = []
@@ -84,6 +85,8 @@ class Board:
         self.hash ^= _ZOBRIST[row][col][int(player) - 1]
         self.move_history.append((row, col, player))
         self.last_move = (row, col)
+        if self._eval_state is not None:
+            self._eval_state.on_board_changed(self, row, col)
         return True
 
     def undo(self) -> Optional[tuple[int, int, Player]]:
@@ -105,6 +108,8 @@ class Board:
         added, removed = self._candidate_history.pop()
         self._candidates -= added
         self._candidates |= removed
+        if self._eval_state is not None:
+            self._eval_state.on_board_changed(self, row, col)
 
         return row, col, player
 
@@ -183,4 +188,5 @@ class Board:
         new_board.hash = self.hash
         new_board._candidates = self._candidates.copy()
         new_board._candidate_history = [(a.copy(), r.copy()) for a, r in self._candidate_history]
+        new_board._eval_state = None
         return new_board

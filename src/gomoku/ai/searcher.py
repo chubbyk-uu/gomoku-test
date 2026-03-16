@@ -14,6 +14,7 @@ from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_S
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _ORDERING_RERANK_TOP_K = 8
+_MoveAnalysis = tuple[bool, int]
 
 
 @dataclass
@@ -149,37 +150,6 @@ class AISearcher:
         if self._deadline is not None and time.perf_counter() >= self._deadline:
             raise SearchTimeout
 
-    def _is_immediate_winning_move(
-        self,
-        board: Board,
-        row: int,
-        col: int,
-        current_player: Player,
-    ) -> bool:
-        """仅基于落点周围四个方向，判断该空位是否一步成五。"""
-        if board.grid[row, col] != Player.NONE:
-            return False
-
-        for dr, dc in _DIRECTIONS:
-            left_len, _ = self._count_one_side(board, row, col, -dr, -dc, current_player)
-            right_len, _ = self._count_one_side(board, row, col, dr, dc, current_player)
-            if 1 + left_len + right_len >= 5:
-                return True
-        return False
-
-    def _find_immediate_winning_moves(
-        self,
-        board: Board,
-        moves: list[tuple[int, int]],
-        current_player: Player,
-    ) -> list[tuple[int, int]]:
-        """返回候选点中所有一步直接成五的着法。"""
-        return [
-            (row, col)
-            for row, col in moves
-            if self._is_immediate_winning_move(board, row, col, current_player)
-        ]
-
     @staticmethod
     def _line_tactical_score(length: int, open_ends: int) -> int:
         """对单方向连子形状给出轻量分值，用于候选排序。"""
@@ -215,16 +185,24 @@ class AISearcher:
         is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
         return length, is_open
 
-    def _score_potential_move(self, board: Board, row: int, col: int, player: Player) -> int:
-        """基于落点附近四个方向的局部形状，对空位做轻量战术评分。"""
+    def _analyze_move_for_player(
+        self,
+        board: Board,
+        row: int,
+        col: int,
+        player: Player,
+    ) -> _MoveAnalysis:
+        """对单个空位做一次局部分析，复用给胜负判断和排序评分。"""
         if board.grid[row, col] != Player.NONE:
-            return -1
+            return False, -1
 
         directional_scores: list[int] = []
         for dr, dc in _DIRECTIONS:
             left_len, left_open = self._count_one_side(board, row, col, -dr, -dc, player)
             right_len, right_open = self._count_one_side(board, row, col, dr, dc, player)
             total_len = 1 + left_len + right_len
+            if total_len >= 5:
+                return True, 200_000
             open_ends = int(left_open) + int(right_open)
             directional_scores.append(self._line_tactical_score(total_len, open_ends))
 
@@ -236,7 +214,43 @@ class AISearcher:
         # 轻微偏向中心，减少同分时边缘点无意义靠前。
         center = board.grid.shape[0] // 2
         center_bias = 2 * board.grid.shape[0] - abs(row - center) - abs(col - center)
-        return total_score + center_bias
+        return False, total_score + center_bias
+
+    def _is_immediate_winning_move(
+        self,
+        board: Board,
+        row: int,
+        col: int,
+        current_player: Player,
+    ) -> bool:
+        """仅基于落点周围四个方向，判断该空位是否一步成五。"""
+        is_win, _ = self._analyze_move_for_player(board, row, col, current_player)
+        return is_win
+
+    def _find_immediate_winning_moves(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+        current_player: Player,
+    ) -> list[tuple[int, int]]:
+        """返回候选点中所有一步直接成五的着法。"""
+        return [
+            (row, col)
+            for row, col in moves
+            if self._is_immediate_winning_move(board, row, col, current_player)
+        ]
+
+    def _analyze_moves_for_player(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+        player: Player,
+    ) -> dict[tuple[int, int], _MoveAnalysis]:
+        """批量分析当前层候选点，避免同一点重复扫描。"""
+        return {
+            (row, col): self._analyze_move_for_player(board, row, col, player)
+            for row, col in moves
+        }
 
     def _score_ordering_move(
         self,
@@ -247,8 +261,8 @@ class AISearcher:
     ) -> tuple[int, int, int]:
         """返回综合排序分，以及进攻/防守分量。"""
         opponent = self.ai_player if current_player == self._opponent else self._opponent
-        attack_score = self._score_potential_move(board, row, col, current_player)
-        defense_score = self._score_potential_move(board, row, col, opponent)
+        _, attack_score = self._analyze_move_for_player(board, row, col, current_player)
+        _, defense_score = self._analyze_move_for_player(board, row, col, opponent)
         return attack_score * 2 + defense_score * 3, attack_score, defense_score
 
     @staticmethod
@@ -292,21 +306,28 @@ class AISearcher:
         current_player: Player,
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
+        current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
         opponent = self.ai_player if current_player == self._opponent else self._opponent
-        blocking_moves = self._find_immediate_winning_moves(board, moves, opponent)
+        opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
+        blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
             ordered_blocks = sorted(blocking_moves)
             return self._prioritize_tt_move(ordered_blocks, tt_move)
+
+        if current_move_analysis is None:
+            current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
 
         scored_moves: list[tuple[int, int, int, int, int]] = []
         for r, c in moves:
             self._check_timeout()
             stats.ordering_evals += 1
-            total_score, attack_score, defense_score = self._score_ordering_move(
-                board, r, c, current_player
-            )
+            _, defense_score = opponent_move_analysis[(r, c)]
+            is_attacking_win, attack_score = current_move_analysis[(r, c)]
+            if is_attacking_win:
+                attack_score = 200_000
+            total_score = attack_score * 2 + defense_score * 3
             scored_moves.append((r, c, total_score, attack_score, defense_score))
 
         scored_moves.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
@@ -440,7 +461,8 @@ class AISearcher:
         tt_move = entry[3] if entry is not None else None
 
         # --- 候选点预检查：若当前走子方存在一步直接成五，则无需再做完整排序 ---
-        winning_moves = self._find_immediate_winning_moves(board, moves, current_player)
+        current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
+        winning_moves = [move for move, (is_win, _) in current_move_analysis.items() if is_win]
         if winning_moves:
             stats.immediate_wins += 1
             winning_move = winning_moves[0]
@@ -449,7 +471,14 @@ class AISearcher:
             return score, winning_move
 
         # --- 威胁驱动候选生成 + 动态截断 ---
-        moves = self._select_search_moves(board, moves, current_player, tt_move, stats)
+        moves = self._select_search_moves(
+            board,
+            moves,
+            current_player,
+            tt_move,
+            stats,
+            current_move_analysis=current_move_analysis,
+        )
 
         best_move: Optional[tuple[int, int]] = None
 

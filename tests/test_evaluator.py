@@ -1,6 +1,15 @@
 """Tests for pattern-based Evaluator."""
 
-from gomoku.ai.evaluator import Shape, _count_shapes, _extract_line, _match_shapes, evaluate
+import random
+
+from gomoku.ai.evaluator import (
+    Shape,
+    _count_shapes,
+    _count_shapes_legacy,
+    _extract_line,
+    _match_shapes,
+    evaluate,
+)
 from gomoku.board import Board
 from gomoku.config import Player
 
@@ -253,6 +262,41 @@ def test_match_half_two_jump():
     board.place(7, 6, Player.BLACK)
     counts = _count_shapes(board, Player.BLACK)
     assert counts[Shape.HALF_TWO] >= 1
+
+
+def test_incremental_count_shapes_matches_legacy_on_fixed_position():
+    board = Board()
+    pieces = [
+        (7, 7, Player.BLACK),
+        (7, 8, Player.WHITE),
+        (8, 7, Player.BLACK),
+        (8, 8, Player.WHITE),
+        (6, 7, Player.BLACK),
+        (9, 8, Player.WHITE),
+        (7, 6, Player.BLACK),
+        (8, 9, Player.WHITE),
+    ]
+    for r, c, p in pieces:
+        board.place(r, c, p)
+
+    for player in (Player.BLACK, Player.WHITE):
+        assert _count_shapes(board, player) == _count_shapes_legacy(board, player)
+
+
+def test_incremental_count_shapes_matches_legacy_on_random_positions():
+    random.seed(0)
+    cells = [(r, c) for r in range(15) for c in range(15)]
+
+    for stones in range(2, 12, 2):
+        for _ in range(20):
+            board = Board()
+            player = Player.BLACK
+            for row, col in random.sample(cells, stones):
+                board.place(row, col, player)
+                player = Player.WHITE if player == Player.BLACK else Player.BLACK
+
+            for side in (Player.BLACK, Player.WHITE):
+                assert _count_shapes(board, side) == _count_shapes_legacy(board, side)
 
 
 # ===================================================================
