@@ -26,11 +26,11 @@ class Shape(IntEnum):
 SHAPE_SCORE: dict[Shape, int] = {
     Shape.FIVE: 100_000,
     Shape.OPEN_FOUR: 50_000,
-    Shape.HALF_FOUR: 3_000,
-    Shape.OPEN_THREE: 1_000,
-    Shape.HALF_THREE: 100,
-    Shape.OPEN_TWO: 100,
-    Shape.HALF_TWO: 10,
+    Shape.HALF_FOUR: 1_800,
+    Shape.OPEN_THREE: 1_400,
+    Shape.HALF_THREE: 180,
+    Shape.OPEN_TWO: 80,
+    Shape.HALF_TWO: 8,
 }
 
 # 防守加权：对手威胁分的乘数
@@ -439,23 +439,30 @@ def _calc_total(counts: dict[Shape, int]) -> int:
     half_fours = counts[Shape.HALF_FOUR]
     open_threes = counts[Shape.OPEN_THREE]
     half_threes = counts[Shape.HALF_THREE]
+    open_twos = counts[Shape.OPEN_TWO]
 
     if open_fours >= 1:
         return 50_000
     if half_fours >= 2:
         return 50_000
     if half_fours >= 1 and open_threes >= 1:
-        return 10_000
+        return 12_000
     if open_threes >= 2:
-        return 10_000
+        return 11_000
     if half_fours >= 1 and half_threes >= 1:
-        return 5_000
+        return 6_000
     if open_threes >= 1 and half_threes >= 1:
-        return 3_000
+        return 3_500
 
     total = 0
     for shape, count in counts.items():
         total += SHAPE_SCORE[shape] * count
+    if half_fours >= 1 and open_threes == 0 and half_threes == 0:
+        total -= 800 * half_fours
+    if open_threes >= 1 and open_twos >= 1:
+        total += 400 * min(open_threes, open_twos)
+    if open_twos >= 2:
+        total += 150 * (open_twos - 1)
     return total
 
 

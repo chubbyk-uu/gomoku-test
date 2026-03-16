@@ -429,3 +429,28 @@ def test_open_four_is_winning():
     assert counts[Shape.OPEN_FOUR] >= 1
     score = evaluate(board, Player.WHITE)
     assert score >= 50_000
+
+
+def test_four_three_scores_higher_than_lone_half_four():
+    """冲四+活三应明显优于孤立冲四。"""
+    half_four_board = Board()
+    for col in range(4):
+        half_four_board.place(7, col, Player.WHITE)
+
+    combo_board = Board()
+    for col in range(4):
+        combo_board.place(7, col, Player.WHITE)
+    combo_board.place(6, 2, Player.WHITE)
+    combo_board.place(8, 2, Player.WHITE)
+
+    assert evaluate(combo_board, Player.WHITE) > evaluate(half_four_board, Player.WHITE)
+
+
+def test_lone_half_four_is_kept_below_combo_threshold():
+    """孤立冲四不应被评成接近强制杀组合。"""
+    board = Board()
+    for col in range(4):
+        board.place(7, col, Player.WHITE)
+
+    score = evaluate(board, Player.WHITE)
+    assert score < 5_000
