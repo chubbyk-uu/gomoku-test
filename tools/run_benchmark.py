@@ -35,6 +35,20 @@ def main() -> None:
         "--games", type=int, default=20, metavar="N", help="Number of games to play"
     )
     parser.add_argument(
+        "--repo-a",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Optional repo/worktree path for Player A; defaults to current workspace",
+    )
+    parser.add_argument(
+        "--repo-b",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Optional repo/worktree path for Player B; defaults to current workspace",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress per-game output, print report only",
@@ -52,15 +66,28 @@ def main() -> None:
         metavar="PATH",
         help="Write per-game self-play records to a JSON file",
     )
+    parser.add_argument(
+        "--max-moves",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Declare a draw after N total moves to keep long self-play runs bounded",
+    )
     args = parser.parse_args()
 
     print(f"Player A  depth={args.depth_a}")
     print(f"Player B  depth={args.depth_b}")
     print(f"Games     {args.games}")
+    if args.repo_a:
+        print(f"Repo A    {args.repo_a}")
+    if args.repo_b:
+        print(f"Repo B    {args.repo_b}")
     if args.seed is not None:
         print(f"Seed      {args.seed}")
     if args.save_json:
         print(f"Save JSON {args.save_json}")
+    if args.max_moves is not None:
+        print(f"Max moves {args.max_moves}")
     print()
 
     # ai_player is overridden per-game inside run_benchmark; initial value is a placeholder
@@ -75,6 +102,9 @@ def main() -> None:
         print_report=True,
         seed=args.seed,
         save_json=args.save_json,
+        repo_a=args.repo_a,
+        repo_b=args.repo_b,
+        max_moves=args.max_moves,
     )
 
 

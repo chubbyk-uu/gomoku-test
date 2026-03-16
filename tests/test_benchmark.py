@@ -38,3 +38,59 @@ def test_run_benchmark_can_save_json_records(tmp_path):
     assert payload["seed"] == 7
     assert len(payload["games"]) == 1
     assert payload["games"][0]["moves"]
+
+
+def test_run_benchmark_supports_repo_backed_workers(tmp_path):
+    from benchmark import run_benchmark
+
+    from gomoku.ai.searcher import AISearcher
+    from gomoku.config import Player
+
+    repo_root = Path(__file__).resolve().parents[1]
+    output_path = tmp_path / "selfplay_workers.json"
+    player_a = AISearcher(depth=1, ai_player=Player.BLACK, time_limit_s=None)
+    player_b = AISearcher(depth=1, ai_player=Player.WHITE, time_limit_s=None)
+
+    result = run_benchmark(
+        player_a,
+        player_b,
+        num_games=1,
+        verbose=False,
+        print_report=False,
+        seed=3,
+        save_json=str(output_path),
+        repo_a=str(repo_root),
+        repo_b=str(repo_root),
+    )
+
+    assert result.total_games() == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["repo_a"] == str(repo_root)
+    assert payload["repo_b"] == str(repo_root)
+
+
+def test_run_benchmark_can_cap_game_length(tmp_path):
+    from benchmark import run_benchmark
+
+    from gomoku.ai.searcher import AISearcher
+    from gomoku.config import Player
+
+    output_path = tmp_path / "capped.json"
+    player_a = AISearcher(depth=1, ai_player=Player.BLACK, time_limit_s=None)
+    player_b = AISearcher(depth=1, ai_player=Player.WHITE, time_limit_s=None)
+
+    result = run_benchmark(
+        player_a,
+        player_b,
+        num_games=1,
+        verbose=False,
+        print_report=False,
+        seed=11,
+        save_json=str(output_path),
+        max_moves=1,
+    )
+
+    assert result.draws == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["max_moves"] == 1
+    assert payload["game_lengths"] == [1]

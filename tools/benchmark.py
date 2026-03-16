@@ -2,6 +2,8 @@
 
 import json
 import random
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +39,8 @@ class BenchmarkResult:
     search_stats_a: list[SearchStats] = field(default_factory=list)
     search_stats_b: list[SearchStats] = field(default_factory=list)
     game_records: list[dict] = field(default_factory=list)
+    repo_a: str | None = None
+    repo_b: str | None = None
 
     def total_games(self) -> int:
         """Return total number of completed games."""
@@ -116,12 +120,13 @@ def _random_opening_move() -> tuple[int, int]:
 
 
 def _play_game(
-    searcher_black: AISearcher,
-    searcher_white: AISearcher,
+    searcher_black: object,
+    searcher_white: object,
     times_black: list[float],
     times_white: list[float],
     stats_black: list[SearchStats],
     stats_white: list[SearchStats],
+    max_moves: int | None = None,
 ) -> tuple[Optional[Player], int, list[dict]]:
     """Play a single game to completion.
 
@@ -178,10 +183,93 @@ def _play_game(
 
         if board.check_win(row, col):
             return current, num_moves, move_records
+        if max_moves is not None and num_moves >= max_moves:
+            return None, num_moves, move_records
         if board.is_full():
             return None, num_moves, move_records
 
         current = Player.WHITE if current == Player.BLACK else Player.BLACK
+
+
+class _EngineWrapper:
+    """Unified interface for local and subprocess-backed search engines."""
+
+    def __init__(
+        self,
+        depth: int,
+        ai_player: Player,
+        repo_root: str | None = None,
+    ) -> None:
+        self._repo_root = str(Path(repo_root).resolve()) if repo_root is not None else None
+        self._proc: subprocess.Popen[str] | None = None
+        self._searcher: AISearcher | None = None
+        self.last_search_stats = SearchStats()
+
+        if self._repo_root is None:
+            self._searcher = AISearcher(depth=depth, ai_player=ai_player)
+            return
+
+        worker_path = Path(__file__).with_name("engine_worker.py")
+        self._proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(worker_path),
+                "--repo-root",
+                self._repo_root,
+                "--depth",
+                str(depth),
+                "--ai-player",
+                ai_player.name,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
+        if self._searcher is not None:
+            move = self._searcher.find_best_move(board)
+            self.last_search_stats = self._searcher.last_search_stats
+            return move
+
+        assert self._proc is not None
+        assert self._proc.stdin is not None
+        assert self._proc.stdout is not None
+        payload = {
+            "cmd": "best_move",
+            "moves": [[r, c, int(player)] for r, c, player in board.move_history],
+        }
+        self._proc.stdin.write(json.dumps(payload) + "\n")
+        self._proc.stdin.flush()
+        line = self._proc.stdout.readline()
+        if not line:
+            stderr = self._proc.stderr.read() if self._proc.stderr is not None else ""
+            raise RuntimeError(f"Engine worker exited unexpectedly: {stderr}")
+        response = json.loads(line)
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        self.last_search_stats = SearchStats(**response["stats"])
+        move = response["move"]
+        return tuple(move) if move is not None else None
+
+    def close(self) -> None:
+        if self._proc is None:
+            return
+        if self._proc.poll() is None and self._proc.stdin is not None:
+            try:
+                self._proc.stdin.write(json.dumps({"cmd": "quit"}) + "\n")
+                self._proc.stdin.flush()
+            except BrokenPipeError:
+                pass
+        try:
+            self._proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+
+
+def _make_engine(depth: int, ai_player: Player, repo_root: str | None) -> _EngineWrapper:
+    return _EngineWrapper(depth=depth, ai_player=ai_player, repo_root=repo_root)
 
 
 def run_benchmark(
@@ -192,6 +280,9 @@ def run_benchmark(
     print_report: bool = True,
     seed: Optional[int] = None,
     save_json: Optional[str] = None,
+    repo_a: str | None = None,
+    repo_b: str | None = None,
+    max_moves: int | None = None,
 ) -> BenchmarkResult:
     """Run automated self-play benchmark between two AISearcher instances.
 
@@ -213,6 +304,8 @@ def run_benchmark(
         BenchmarkResult with win/draw counts and timing statistics.
     """
     result = BenchmarkResult()
+    result.repo_a = str(Path(repo_a).resolve()) if repo_a is not None else None
+    result.repo_b = str(Path(repo_b).resolve()) if repo_b is not None else None
     if seed is not None:
         random.seed(seed)
     times_a: list[float] = []
@@ -224,20 +317,24 @@ def run_benchmark(
         # 随机分配颜色，保证大数上均衡但每局不可预测
         a_is_black = random.random() < 0.5
         if a_is_black:
-            sb = AISearcher(depth=player_a.depth, ai_player=Player.BLACK)
-            sw = AISearcher(depth=player_b.depth, ai_player=Player.WHITE)
+            sb = _make_engine(player_a.depth, Player.BLACK, repo_a)
+            sw = _make_engine(player_b.depth, Player.WHITE, repo_b)
         else:
-            sb = AISearcher(depth=player_b.depth, ai_player=Player.BLACK)
-            sw = AISearcher(depth=player_a.depth, ai_player=Player.WHITE)
+            sb = _make_engine(player_b.depth, Player.BLACK, repo_b)
+            sw = _make_engine(player_a.depth, Player.WHITE, repo_a)
 
         times_black: list[float] = []
         times_white: list[float] = []
         stats_black: list[SearchStats] = []
         stats_white: list[SearchStats] = []
 
-        winner, num_moves, move_records = _play_game(
-            sb, sw, times_black, times_white, stats_black, stats_white
-        )
+        try:
+            winner, num_moves, move_records = _play_game(
+                sb, sw, times_black, times_white, stats_black, stats_white, max_moves=max_moves
+            )
+        finally:
+            sb.close()
+            sw.close()
         result.game_lengths.append(num_moves)
 
         if a_is_black:
@@ -275,6 +372,8 @@ def run_benchmark(
             {
                 "game_index": game_idx + 1,
                 "a_color": "BLACK" if a_is_black else "WHITE",
+                "repo_a": result.repo_a,
+                "repo_b": result.repo_b,
                 "winner": winner.name if winner is not None else "DRAW",
                 "num_moves": num_moves,
                 "moves": move_records,
@@ -289,7 +388,14 @@ def run_benchmark(
     if print_report:
         _print_report(result, player_a.depth, player_b.depth)
     if save_json is not None:
-        _write_records(Path(save_json), result, player_a.depth, player_b.depth, seed)
+        _write_records(
+            Path(save_json),
+            result,
+            player_a.depth,
+            player_b.depth,
+            seed,
+            max_moves,
+        )
 
     return result
 
@@ -300,11 +406,15 @@ def _write_records(
     depth_a: int,
     depth_b: int,
     seed: Optional[int],
+    max_moves: int | None,
 ) -> None:
     payload = {
         "depth_a": depth_a,
         "depth_b": depth_b,
+        "repo_a": result.repo_a,
+        "repo_b": result.repo_b,
         "seed": seed,
+        "max_moves": max_moves,
         "wins_a": result.wins_a,
         "wins_b": result.wins_b,
         "draws": result.draws,
