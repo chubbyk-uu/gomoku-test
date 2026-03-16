@@ -245,7 +245,10 @@ def run_benchmark(
 
         if verbose:
             color_a = "BLK" if a_is_black else "WHT"
-            print(f"  Game {game_idx + 1:>3}/{num_games}  A={color_a}  moves={num_moves:>3}  {outcome}")
+            print(
+                f"  Game {game_idx + 1:>3}/{num_games}"
+                f"  A={color_a}  moves={num_moves:>3}  {outcome}"
+            )
 
     result.move_times_a = times_a
     result.move_times_b = times_b

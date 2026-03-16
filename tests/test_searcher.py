@@ -1,7 +1,6 @@
 """Tests for AISearcher."""
 
 import gomoku.ai.searcher as searcher_module
-
 from gomoku.ai.searcher import AISearcher
 from gomoku.board import Board
 from gomoku.config import Player

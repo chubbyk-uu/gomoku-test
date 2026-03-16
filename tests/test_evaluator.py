@@ -1,14 +1,6 @@
 """Tests for pattern-based Evaluator."""
 
-from gomoku.ai.evaluator import (
-    DEFENSE_WEIGHT,
-    SHAPE_SCORE,
-    Shape,
-    _count_shapes,
-    _extract_line,
-    _match_shapes,
-    evaluate,
-)
+from gomoku.ai.evaluator import Shape, _count_shapes, _extract_line, _match_shapes, evaluate
 from gomoku.board import Board
 from gomoku.config import Player
 
@@ -120,9 +112,7 @@ def test_match_half_four_jump_x_xxx():
 
 def test_match_half_four_jump_xxx_x():
     # XXX_X: 跳冲四
-    line = [0, 1, 1, 1, 0, 1, 0, 0, 0]
-    # index 1=X, 2=X, 3=X, 4=E, 5=X → XXX_X but center is index 4=E
-    # 需要重构：center=index4=E 不行。用 board 测试更可靠
+    # 直接构造棋盘局面比 line 中心点测试更可靠
     board = Board()
     # XXX_X 横向: (7,3)(7,4)(7,5) 空 (7,7)
     board.place(7, 3, Player.BLACK)

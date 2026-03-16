@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from benchmark import run_benchmark  # noqa: E402
+
 from gomoku.ai.searcher import AISearcher  # noqa: E402
 from gomoku.config import Player  # noqa: E402
 
@@ -24,10 +25,20 @@ def main() -> None:
         description="Benchmark two Gomoku AI searchers via automated self-play.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--depth-a", type=int, default=3, metavar="N", help="Search depth for Player A")
-    parser.add_argument("--depth-b", type=int, default=2, metavar="N", help="Search depth for Player B")
-    parser.add_argument("--games", type=int, default=20, metavar="N", help="Number of games to play")
-    parser.add_argument("--quiet", action="store_true", help="Suppress per-game output, print report only")
+    parser.add_argument(
+        "--depth-a", type=int, default=3, metavar="N", help="Search depth for Player A"
+    )
+    parser.add_argument(
+        "--depth-b", type=int, default=2, metavar="N", help="Search depth for Player B"
+    )
+    parser.add_argument(
+        "--games", type=int, default=20, metavar="N", help="Number of games to play"
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-game output, print report only",
+    )
     args = parser.parse_args()
 
     print(f"Player A  depth={args.depth_a}")
