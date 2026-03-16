@@ -35,6 +35,7 @@ RED: tuple[int, int, int] = (255, 0, 0)  # 提示文字颜色
 AI_SEARCH_DEPTH: int = 4  # Minimax 最大搜索深度上限
 AI_SEARCH_TIME_LIMIT_S: float | None = None  # 可选限时；None 表示仅按最大深度搜索
 AI_MAX_CANDIDATES: int = 15  # 每层最多搜索候选点数（move ordering 后截断，减少搜索空间）
+AI_CANDIDATE_RANGE: int = 2  # 候选点邻域半径；越大越宽，越小越快但更容易漏点
 AI_MOVE_DELAY_MS: int = 100  # AI 落子前的延时 (ms), 便于观察
 AI_TT_MAX_SIZE: int = 100_000  # 置换表最大条目数；超限后清空，避免长局无限增长
 AI_EVAL_CACHE_MAX_SIZE: int = 100_000  # 评估缓存最大条目数；超限后清空

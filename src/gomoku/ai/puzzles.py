@@ -21,6 +21,8 @@ class PuzzleCase:
     ai_player: Player
     placements: tuple[Placement, ...]
     expected_moves: frozenset[tuple[int, int]]
+    acceptable_moves: frozenset[tuple[int, int]] = frozenset()
+    forbidden_moves: frozenset[tuple[int, int]] = frozenset()
     description: str = ""
 
     def build_board(self) -> Board:
@@ -39,6 +41,8 @@ class PuzzleResult:
     category: str
     move: tuple[int, int] | None
     expected_moves: frozenset[tuple[int, int]]
+    acceptable_moves: frozenset[tuple[int, int]]
+    forbidden_moves: frozenset[tuple[int, int]]
     elapsed_s: float
     solved: bool
     stats: SearchStats
@@ -143,6 +147,89 @@ def default_puzzle_cases() -> list[PuzzleCase]:
             expected_moves=frozenset({(9, 7)}),
             description="A quieter middle-game shape used for speed regression.",
         ),
+        PuzzleCase(
+            name="judgment_attack_over_blocked_three",
+            category="judgment",
+            ai_player=Player.WHITE,
+            placements=(
+                (7, 4, Player.BLACK),
+                (7, 5, Player.BLACK),
+                (7, 6, Player.BLACK),
+                (7, 7, Player.WHITE),
+                (6, 9, Player.WHITE),
+                (7, 9, Player.WHITE),
+                (8, 9, Player.WHITE),
+            ),
+            expected_moves=frozenset({(9, 9)}),
+            description=(
+                "A blocked black three is not urgent; white should prefer the stronger attack."
+            ),
+        ),
+        PuzzleCase(
+            name="judgment_expand_attack_over_small_block",
+            category="judgment",
+            ai_player=Player.WHITE,
+            placements=(
+                (7, 5, Player.BLACK),
+                (7, 6, Player.BLACK),
+                (7, 7, Player.WHITE),
+                (6, 9, Player.WHITE),
+                (7, 9, Player.WHITE),
+                (8, 9, Player.WHITE),
+            ),
+            expected_moves=frozenset({(9, 9)}),
+            description=(
+                "White should extend its own live attack instead of spending a move on a small block."
+            ),
+        ),
+        PuzzleCase(
+            name="judgment_sleep_three_not_urgent",
+            category="judgment",
+            ai_player=Player.WHITE,
+            placements=(
+                (7, 5, Player.BLACK),
+                (7, 6, Player.BLACK),
+                (7, 7, Player.BLACK),
+                (7, 8, Player.WHITE),
+                (6, 4, Player.WHITE),
+                (6, 5, Player.WHITE),
+                (6, 6, Player.WHITE),
+            ),
+            expected_moves=frozenset({(6, 7)}),
+            description=(
+                "A one-sided black three should not outweigh a direct attacking extension for white."
+            ),
+        ),
+        PuzzleCase(
+            name="judgment_real_game_prefer_half_four_over_loose_block",
+            category="judgment",
+            ai_player=Player.BLACK,
+            placements=(
+                (6, 6, Player.BLACK),
+                (6, 9, Player.BLACK),
+                (7, 6, Player.BLACK),
+                (7, 7, Player.BLACK),
+                (7, 8, Player.BLACK),
+                (7, 9, Player.BLACK),
+                (8, 5, Player.BLACK),
+                (8, 8, Player.BLACK),
+                (8, 9, Player.BLACK),
+                (5, 5, Player.WHITE),
+                (6, 5, Player.WHITE),
+                (6, 7, Player.WHITE),
+                (6, 8, Player.WHITE),
+                (6, 10, Player.WHITE),
+                (7, 5, Player.WHITE),
+                (7, 10, Player.WHITE),
+                (8, 7, Player.WHITE),
+                (9, 9, Player.WHITE),
+            ),
+            expected_moves=frozenset(),
+            forbidden_moves=frozenset({(4, 5)}),
+            description=(
+                "Real-game case: black should create a strong local threat rather than play a loose block."
+            ),
+        ),
     ]
 
 
@@ -168,12 +255,27 @@ def run_puzzle_suite(
                     category=case.category,
                     move=move,
                     expected_moves=case.expected_moves,
+                    acceptable_moves=case.acceptable_moves,
+                    forbidden_moves=case.forbidden_moves,
                     elapsed_s=elapsed_s,
-                    solved=move in case.expected_moves,
+                    solved=_is_puzzle_move_acceptable(case, move),
                     stats=searcher.last_search_stats,
                 )
             )
     return results
+
+
+def _is_puzzle_move_acceptable(case: PuzzleCase, move: tuple[int, int] | None) -> bool:
+    """Return whether one move satisfies a puzzle's success criteria."""
+    if move is None:
+        return False
+    if case.expected_moves:
+        return move in case.expected_moves
+    if case.acceptable_moves and move in case.acceptable_moves:
+        return True
+    if case.forbidden_moves:
+        return move not in case.forbidden_moves
+    return False
 
 
 def summarize_puzzle_results(results: list[PuzzleResult]) -> dict[str, dict[str, float]]:

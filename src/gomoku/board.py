@@ -5,13 +5,12 @@ from typing import Optional
 
 import numpy as np
 
-from gomoku.config import BOARD_SIZE, Player
+from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, Player
 
-_CANDIDATE_RANGE = 2  # 候选点搜索半径
 _CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
     (dr, dc)
-    for dr in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1)
-    for dc in range(-_CANDIDATE_RANGE, _CANDIDATE_RANGE + 1)
+    for dr in range(-AI_CANDIDATE_RANGE, AI_CANDIDATE_RANGE + 1)
+    for dc in range(-AI_CANDIDATE_RANGE, AI_CANDIDATE_RANGE + 1)
     if not (dr == 0 and dc == 0)
 )
 

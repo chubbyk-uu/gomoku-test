@@ -35,7 +35,7 @@ def main() -> None:
     parser.add_argument(
         "--category",
         action="append",
-        choices=["attack", "defense", "strategy", "tactic"],
+        choices=["attack", "defense", "judgment", "strategy", "tactic"],
         help="Only run selected categories; can be passed multiple times",
     )
     args = parser.parse_args()
@@ -58,6 +58,17 @@ def main() -> None:
 
     for result in results:
         status = "OK" if result.solved else "MISS"
+        if result.expected_moves:
+            target_desc = f"expected={sorted(result.expected_moves)}"
+        elif result.acceptable_moves or result.forbidden_moves:
+            parts: list[str] = []
+            if result.acceptable_moves:
+                parts.append(f"acceptable={sorted(result.acceptable_moves)}")
+            if result.forbidden_moves:
+                parts.append(f"forbidden={sorted(result.forbidden_moves)}")
+            target_desc = " ".join(parts)
+        else:
+            target_desc = ""
         print(
             f"{status:>4}  {result.case_name:<36}"
             f" move={result.move!s:<10}"
@@ -65,6 +76,8 @@ def main() -> None:
             f" nodes={result.stats.nodes:>4}"
             f" forcing={result.stats.forcing_wins:>2}"
         )
+        if target_desc:
+            print(f"      {target_desc}")
 
     print()
     print("By category:")
@@ -82,11 +95,20 @@ def main() -> None:
     print()
     print("Slowest cases:")
     for result in slowest:
+        if result.expected_moves:
+            target_desc = f"expected={sorted(result.expected_moves)}"
+        else:
+            parts: list[str] = []
+            if result.acceptable_moves:
+                parts.append(f"acceptable={sorted(result.acceptable_moves)}")
+            if result.forbidden_moves:
+                parts.append(f"forbidden={sorted(result.forbidden_moves)}")
+            target_desc = " ".join(parts)
         print(
             f"  {result.case_name:<36}"
             f" {result.elapsed_s:>6.3f}s"
             f" move={result.move!s:<10}"
-            f" expected={sorted(result.expected_moves)}"
+            f" {target_desc}"
         )
 
 
