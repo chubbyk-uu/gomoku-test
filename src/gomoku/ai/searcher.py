@@ -540,14 +540,6 @@ class AISearcher:
 
         scored_moves.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
 
-        threat_moves = [
-            (r, c)
-            for r, c, _, attack_score, defense_score in scored_moves
-            if attack_score >= 30_000 or defense_score >= 30_000
-        ]
-        if threat_moves:
-            return self._prioritize_tt_move(threat_moves[: min(len(threat_moves), 6)], tt_move)
-
         cutoff = self._dynamic_cutoff(scored_moves, AI_MAX_CANDIDATES)
         selected_moves = scored_moves[:cutoff]
         rerank_limit = min(len(selected_moves), _ORDERING_RERANK_TOP_K)

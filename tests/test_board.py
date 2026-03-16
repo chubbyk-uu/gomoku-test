@@ -1,7 +1,9 @@
 """Tests for Board class."""
 
+import importlib
+
 from gomoku.board import Board
-from gomoku.config import BOARD_SIZE, Player
+from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, Player
 
 # ---------------------------------------------------------------------------
 # place & undo
@@ -141,6 +143,22 @@ def test_candidate_moves_no_duplicates():
     board.place(7, 8, Player.WHITE)
     moves = board.get_candidate_moves()
     assert len(moves) == len(set(moves))
+
+
+def test_candidate_moves_respect_configured_range(monkeypatch):
+    monkeypatch.setattr("gomoku.config.AI_CANDIDATE_RANGE", 1)
+    board_module = importlib.import_module("gomoku.board")
+    board_module = importlib.reload(board_module)
+
+    board = board_module.Board()
+    board.place(7, 7, Player.BLACK)
+    moves = set(board.get_candidate_moves())
+
+    assert (7, 9) not in moves
+    assert (9, 7) not in moves
+
+    board_module = importlib.reload(board_module)
+    assert AI_CANDIDATE_RANGE == 2
 
 
 # ---------------------------------------------------------------------------

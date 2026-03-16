@@ -179,7 +179,8 @@ def default_puzzle_cases() -> list[PuzzleCase]:
             ),
             expected_moves=frozenset({(9, 9)}),
             description=(
-                "White should extend its own live attack instead of spending a move on a small block."
+                "White should extend its own live attack instead of spending a move "
+                "on a small block."
             ),
         ),
         PuzzleCase(
@@ -197,7 +198,8 @@ def default_puzzle_cases() -> list[PuzzleCase]:
             ),
             expected_moves=frozenset({(6, 7)}),
             description=(
-                "A one-sided black three should not outweigh a direct attacking extension for white."
+                "A one-sided black three should not outweigh a direct attacking "
+                "extension for white."
             ),
         ),
         PuzzleCase(
@@ -227,7 +229,8 @@ def default_puzzle_cases() -> list[PuzzleCase]:
             expected_moves=frozenset(),
             forbidden_moves=frozenset({(4, 5)}),
             description=(
-                "Real-game case: black should create a strong local threat rather than play a loose block."
+                "Real-game case: black should create a strong local threat rather "
+                "than play a loose block."
             ),
         ),
     ]

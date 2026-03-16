@@ -49,3 +49,17 @@ def test_puzzle_accepts_reasonable_moves_and_rejects_forbidden_move():
     assert _is_puzzle_move_acceptable(case, (8, 10)) is True
     assert _is_puzzle_move_acceptable(case, (4, 5)) is False
     assert _is_puzzle_move_acceptable(case, (9, 8)) is True
+
+
+def test_real_game_judgment_case_avoids_loose_block_at_depth_four():
+    case = next(
+        puzzle
+        for puzzle in default_puzzle_cases()
+        if puzzle.name == "judgment_real_game_prefer_half_four_over_loose_block"
+    )
+    searcher = AISearcher(depth=4, ai_player=case.ai_player, time_limit_s=None)
+
+    move = searcher.find_best_move(case.build_board())
+
+    assert move is not None
+    assert move not in case.forbidden_moves
