@@ -1,8 +1,10 @@
 """Benchmark tool for comparing two AISearcher instances through automated self-play."""
 
+import json
 import random
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from gomoku.ai.searcher import AISearcher, SearchStats
@@ -34,6 +36,7 @@ class BenchmarkResult:
     game_lengths: list[int] = field(default_factory=list)
     search_stats_a: list[SearchStats] = field(default_factory=list)
     search_stats_b: list[SearchStats] = field(default_factory=list)
+    game_records: list[dict] = field(default_factory=list)
 
     def total_games(self) -> int:
         """Return total number of completed games."""
@@ -119,7 +122,7 @@ def _play_game(
     times_white: list[float],
     stats_black: list[SearchStats],
     stats_white: list[SearchStats],
-) -> tuple[Optional[Player], int]:
+) -> tuple[Optional[Player], int, list[dict]]:
     """Play a single game to completion.
 
     The first move (BLACK) is placed randomly in the center 5×5 region instead of
@@ -137,33 +140,46 @@ def _play_game(
     board = Board()
     current = Player.BLACK
     num_moves = 0
+    move_records: list[dict] = []
 
     while True:
         # 第一手随机落在中心 5×5，后续交给 AI
         if num_moves == 0:
             move = _random_opening_move()
+            elapsed_s = 0.0
         elif current == Player.BLACK:
             t0 = time.perf_counter()
             move = searcher_black.find_best_move(board)
-            times_black.append(time.perf_counter() - t0)
+            elapsed_s = time.perf_counter() - t0
+            times_black.append(elapsed_s)
             stats_black.append(searcher_black.last_search_stats)
         else:
             t0 = time.perf_counter()
             move = searcher_white.find_best_move(board)
-            times_white.append(time.perf_counter() - t0)
+            elapsed_s = time.perf_counter() - t0
+            times_white.append(elapsed_s)
             stats_white.append(searcher_white.last_search_stats)
 
         if move is None:
-            return None, num_moves  # no candidates — treat as draw
+            return None, num_moves, move_records  # no candidates — treat as draw
 
         row, col = move
+        move_records.append(
+            {
+                "move_no": num_moves + 1,
+                "player": current.name,
+                "row": row,
+                "col": col,
+                "elapsed_ms": round(elapsed_s * 1000, 3),
+            }
+        )
         board.place(row, col, current)
         num_moves += 1
 
         if board.check_win(row, col):
-            return current, num_moves
+            return current, num_moves, move_records
         if board.is_full():
-            return None, num_moves
+            return None, num_moves, move_records
 
         current = Player.WHITE if current == Player.BLACK else Player.BLACK
 
@@ -174,6 +190,8 @@ def run_benchmark(
     num_games: int = 20,
     verbose: bool = True,
     print_report: bool = True,
+    seed: Optional[int] = None,
+    save_json: Optional[str] = None,
 ) -> BenchmarkResult:
     """Run automated self-play benchmark between two AISearcher instances.
 
@@ -195,6 +213,8 @@ def run_benchmark(
         BenchmarkResult with win/draw counts and timing statistics.
     """
     result = BenchmarkResult()
+    if seed is not None:
+        random.seed(seed)
     times_a: list[float] = []
     times_b: list[float] = []
     stats_a: list[SearchStats] = []
@@ -215,7 +235,9 @@ def run_benchmark(
         stats_black: list[SearchStats] = []
         stats_white: list[SearchStats] = []
 
-        winner, num_moves = _play_game(sb, sw, times_black, times_white, stats_black, stats_white)
+        winner, num_moves, move_records = _play_game(
+            sb, sw, times_black, times_white, stats_black, stats_white
+        )
         result.game_lengths.append(num_moves)
 
         if a_is_black:
@@ -249,6 +271,15 @@ def run_benchmark(
                 f"  Game {game_idx + 1:>3}/{num_games}"
                 f"  A={color_a}  moves={num_moves:>3}  {outcome}"
             )
+        result.game_records.append(
+            {
+                "game_index": game_idx + 1,
+                "a_color": "BLACK" if a_is_black else "WHITE",
+                "winner": winner.name if winner is not None else "DRAW",
+                "num_moves": num_moves,
+                "moves": move_records,
+            }
+        )
 
     result.move_times_a = times_a
     result.move_times_b = times_b
@@ -257,8 +288,31 @@ def run_benchmark(
 
     if print_report:
         _print_report(result, player_a.depth, player_b.depth)
+    if save_json is not None:
+        _write_records(Path(save_json), result, player_a.depth, player_b.depth, seed)
 
     return result
+
+
+def _write_records(
+    path: Path,
+    result: BenchmarkResult,
+    depth_a: int,
+    depth_b: int,
+    seed: Optional[int],
+) -> None:
+    payload = {
+        "depth_a": depth_a,
+        "depth_b": depth_b,
+        "seed": seed,
+        "wins_a": result.wins_a,
+        "wins_b": result.wins_b,
+        "draws": result.draws,
+        "game_lengths": result.game_lengths,
+        "games": result.game_records,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _print_report(result: BenchmarkResult, depth_a: int, depth_b: int) -> None:

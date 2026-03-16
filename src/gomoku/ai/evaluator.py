@@ -446,6 +446,34 @@ def _count_shapes(board: Board, player: Player) -> dict[Shape, int]:
     return _tuple_to_counts(tuple(state.total_counts[player]))
 
 
+def _count_shapes_after_move(
+    board: Board,
+    player: Player,
+    row: int,
+    col: int,
+) -> dict[Shape, int]:
+    """精确计算某方在假设落子后的总棋型计数，不修改棋盘状态。"""
+    state = _ensure_eval_state(board)
+    totals = list(state.total_counts[player])
+    board.grid[row, col] = player
+    try:
+        for direction_index in range(len(_DIRECTIONS)):
+            line_id = _line_id_for_cell(direction_index, row, col)
+            key = (direction_index, line_id)
+            old_counts = state.line_counts[player][key]
+            new_counts = _count_shapes_on_line(board, player, direction_index, line_id)
+            if new_counts == old_counts:
+                continue
+            for idx, old_value in enumerate(old_counts):
+                totals[idx] -= old_value
+            for idx, new_value in enumerate(new_counts):
+                totals[idx] += new_value
+    finally:
+        board.grid[row, col] = Player.NONE
+
+    return _tuple_to_counts(tuple(totals))
+
+
 def _calc_total(counts: dict[Shape, int]) -> int:
     """根据棋型数量计算总分（含组合加成）。"""
     if counts[Shape.FIVE] > 0:

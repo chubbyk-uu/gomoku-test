@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import IntEnum
 
-from gomoku.ai.evaluator import Shape, _count_shapes
+from gomoku.ai.evaluator import Shape, _count_shapes_after_move
 from gomoku.board import Board
 from gomoku.config import Player
 
@@ -142,11 +142,7 @@ def _classify_move_for_player(board: Board, row: int, col: int, player: Player) 
     if not has_potential:
         return ThreatType.OTHER
 
-    board.place(row, col, player)
-    try:
-        counts = _count_shapes(board, player)
-    finally:
-        board.undo()
+    counts = _count_shapes_after_move(board, player, row, col)
     return _classify_from_counts(counts)
 
 

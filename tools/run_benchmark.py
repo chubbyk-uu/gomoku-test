@@ -39,11 +39,28 @@ def main() -> None:
         action="store_true",
         help="Suppress per-game output, print report only",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible color assignment and opening moves",
+    )
+    parser.add_argument(
+        "--save-json",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Write per-game self-play records to a JSON file",
+    )
     args = parser.parse_args()
 
     print(f"Player A  depth={args.depth_a}")
     print(f"Player B  depth={args.depth_b}")
     print(f"Games     {args.games}")
+    if args.seed is not None:
+        print(f"Seed      {args.seed}")
+    if args.save_json:
+        print(f"Save JSON {args.save_json}")
     print()
 
     # ai_player is overridden per-game inside run_benchmark; initial value is a placeholder
@@ -56,6 +73,8 @@ def main() -> None:
         num_games=args.games,
         verbose=not args.quiet,
         print_report=True,
+        seed=args.seed,
+        save_json=args.save_json,
     )
 
 

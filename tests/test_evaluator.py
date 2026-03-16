@@ -5,6 +5,7 @@ import random
 from gomoku.ai.evaluator import (
     Shape,
     _count_shapes,
+    _count_shapes_after_move,
     _count_shapes_legacy,
     _extract_line,
     _match_shapes,
@@ -262,6 +263,29 @@ def test_match_half_two_jump():
     board.place(7, 6, Player.BLACK)
     counts = _count_shapes(board, Player.BLACK)
     assert counts[Shape.HALF_TWO] >= 1
+
+
+def test_count_shapes_after_move_matches_place_and_recount():
+    board = _board_with_pieces(
+        [
+            (7, 7, Player.BLACK),
+            (7, 8, Player.BLACK),
+            (8, 7, Player.BLACK),
+            (6, 6, Player.WHITE),
+            (6, 8, Player.WHITE),
+            (8, 8, Player.WHITE),
+        ]
+    )
+
+    hypothetical = _count_shapes_after_move(board, Player.BLACK, 7, 6)
+
+    board.place(7, 6, Player.BLACK)
+    try:
+        actual = _count_shapes(board, Player.BLACK)
+    finally:
+        board.undo()
+
+    assert hypothetical == actual
 
 
 def test_incremental_count_shapes_matches_legacy_on_fixed_position():
