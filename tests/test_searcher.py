@@ -228,6 +228,20 @@ def test_select_search_moves_restricts_to_blocks_against_immediate_loss():
     assert stats.ordering_evals == 0
 
 
+def test_select_search_moves_blocks_opponent_win_before_own_double_threat():
+    """对手已有一步赢点时，必须先防，不能优先走自己的双活三。"""
+    board = Board()
+    for row, col in ((5, 6), (7, 7), (8, 6), (8, 8)):
+        board.place(row, col, Player.BLACK)
+    for row, col in ((6, 7), (7, 8), (8, 9), (10, 11)):
+        board.place(row, col, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=5)
+    move = searcher.find_best_move(board)
+
+    assert move == (9, 10)
+
+
 def test_select_search_moves_prioritizes_open_four(monkeypatch):
     """阶段 2 接入后，OPEN_FOUR 应直接作为最高优先级候选返回。"""
     board = Board()

@@ -481,24 +481,6 @@ class AISearcher:
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
-        attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
-            threat_type: [] for threat_type in ThreatType
-        }
-        for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
-            attack_grouped[info.attack_type].append(info.move)
-
-        for threat_type in (
-            ThreatType.WIN,
-            ThreatType.OPEN_FOUR,
-            ThreatType.DOUBLE_HALF_FOUR,
-            ThreatType.FOUR_THREE,
-            ThreatType.DOUBLE_OPEN_THREE,
-        ):
-            threat_moves = attack_grouped[threat_type]
-            if threat_moves:
-                threat_moves.sort()
-                return self._prioritize_tt_move(threat_moves, tt_move)
-
         defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
         }
@@ -513,6 +495,24 @@ class AISearcher:
             ThreatType.DOUBLE_OPEN_THREE,
         ):
             threat_moves = defense_grouped[threat_type]
+            if threat_moves:
+                threat_moves.sort()
+                return self._prioritize_tt_move(threat_moves, tt_move)
+
+        attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
+            threat_type: [] for threat_type in ThreatType
+        }
+        for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
+            attack_grouped[info.attack_type].append(info.move)
+
+        for threat_type in (
+            ThreatType.WIN,
+            ThreatType.OPEN_FOUR,
+            ThreatType.DOUBLE_HALF_FOUR,
+            ThreatType.FOUR_THREE,
+            ThreatType.DOUBLE_OPEN_THREE,
+        ):
+            threat_moves = attack_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
                 return self._prioritize_tt_move(threat_moves, tt_move)
