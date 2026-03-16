@@ -5,6 +5,10 @@ cimport numpy as cnp
 
 ctypedef cnp.int8_t grid_t
 
+cdef int _X = 1
+cdef int _O = 2
+cdef int _E = 0
+
 
 cdef inline int _line_tactical_score(int length, int open_ends):
     if length >= 5:
@@ -214,3 +218,371 @@ cpdef tuple analyze_move(
 
     center_bias = 2 * board_size - abs(row - center) - abs(col - center)
     return False, total_score + center_bias
+
+
+cdef inline int _match_shape_code(int line[9]):
+    cdef int start
+    cdef int end
+
+    if line[4] != _X:
+        return 0
+
+    for start in range(0, 5):
+        end = start + 5
+        if (
+            line[start] == _X
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+        ):
+            return 7
+
+    for start in range(0, 4):
+        end = start + 6
+        if (
+            line[start] == _E
+            and line[start + 5] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+        ):
+            return 6
+
+    for start in range(0, 4):
+        if (
+            line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+        ):
+            if line[start] == _O and line[start + 5] == _E:
+                return 5
+            if line[start] == _E and line[start + 5] == _O:
+                return 5
+
+    for start in range(0, 5):
+        if (
+            line[start] == _X
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+        ):
+            return 5
+        if (
+            line[start] == _X
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _X
+        ):
+            return 5
+        if (
+            line[start] == _X
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+        ):
+            return 5
+
+    for start in range(0, 4):
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+        ):
+            return 4
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _E
+            and line[start + 5] == _E
+        ):
+            return 4
+
+    for start in range(0, 4):
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+        ):
+            return 4
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+        ):
+            return 4
+
+    for start in range(0, 3):
+        if (
+            line[start] == _O
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+            and line[start + 6] == _E
+        ):
+            return 3
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+            and line[start + 6] == _O
+        ):
+            return 3
+
+    for start in range(0, 4):
+        if (
+            line[start] == _O
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _E
+            and line[start + 5] == _E
+        ):
+            return 3
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _O
+        ):
+            return 3
+
+    for start in range(0, 4):
+        if (
+            line[start] == _O
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+        ):
+            return 3
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _X
+            and line[start + 5] == _O
+        ):
+            return 3
+        if (
+            line[start] == _O
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _X
+            and line[start + 5] == _E
+        ):
+            return 3
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _O
+        ):
+            return 3
+
+    for start in range(0, 4):
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _X
+            and line[start + 4] == _E
+            and line[start + 5] == _E
+        ):
+            return 2
+
+    for start in range(0, 5):
+        if (
+            line[start] == _E
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _E
+        ):
+            return 2
+
+    for start in range(0, 4):
+        if (
+            line[start] == _O
+            and line[start + 1] == _X
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _E
+            and line[start + 5] == _E
+        ):
+            return 1
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _X
+            and line[start + 5] == _O
+        ):
+            return 1
+
+    for start in range(0, 4):
+        if (
+            line[start] == _O
+            and line[start + 1] == _X
+            and line[start + 2] == _E
+            and line[start + 3] == _X
+            and line[start + 4] == _E
+            and line[start + 5] == _E
+        ):
+            return 1
+        if (
+            line[start] == _E
+            and line[start + 1] == _E
+            and line[start + 2] == _X
+            and line[start + 3] == _E
+            and line[start + 4] == _X
+            and line[start + 5] == _O
+        ):
+            return 1
+
+    return 0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef tuple count_shapes_on_line(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int player_val,
+    int direction_index,
+    int line_id,
+    int board_size,
+):
+    cdef int rows[15]
+    cdef int cols[15]
+    cdef int seen_indices[15]
+    cdef int counts[7]
+    cdef int line[9]
+    cdef int line_len = 0
+    cdef int row
+    cdef int col
+    cdef int idx
+    cdef int dr
+    cdef int dc
+    cdef int shape_code
+    cdef int start
+    cdef int end
+    cdef int seen_idx
+    cdef int r
+    cdef int c
+    cdef int i
+    cdef int k
+    cdef int total
+
+    for i in range(15):
+        seen_indices[i] = 0
+    for i in range(7):
+        counts[i] = 0
+
+    if direction_index == 0:
+        dr, dc = 1, 0
+        for row in range(board_size):
+            rows[line_len] = row
+            cols[line_len] = line_id
+            line_len += 1
+    elif direction_index == 1:
+        dr, dc = 0, 1
+        for col in range(board_size):
+            rows[line_len] = line_id
+            cols[line_len] = col
+            line_len += 1
+    elif direction_index == 2:
+        dr, dc = 1, 1
+        total = line_id - (board_size - 1)
+        row = 0 if total >= 0 else -total
+        col = row + total
+        while row < board_size and col < board_size:
+            rows[line_len] = row
+            cols[line_len] = col
+            line_len += 1
+            row += 1
+            col += 1
+    else:
+        dr, dc = 1, -1
+        total = line_id
+        row = 0 if total < board_size else total - (board_size - 1)
+        while row < board_size:
+            col = total - row
+            if 0 <= col < board_size:
+                rows[line_len] = row
+                cols[line_len] = col
+                line_len += 1
+            row += 1
+
+    for idx in range(line_len):
+        if seen_indices[idx]:
+            continue
+        row = rows[idx]
+        col = cols[idx]
+        if grid[row, col] != player_val:
+            continue
+
+        for i in range(9):
+            k = i - 4
+            r = row + dr * k
+            c = col + dc * k
+            if 0 <= r < board_size and 0 <= c < board_size:
+                if grid[r, c] == player_val:
+                    line[i] = _X
+                elif grid[r, c] == 0:
+                    line[i] = _E
+                else:
+                    line[i] = _O
+            else:
+                line[i] = _O
+
+        shape_code = _match_shape_code(line)
+        if shape_code:
+            counts[shape_code - 1] += 1
+            start = idx - 4
+            if start < 0:
+                start = 0
+            end = idx + 5
+            if end > line_len:
+                end = line_len
+            for seen_idx in range(start, end):
+                if grid[rows[seen_idx], cols[seen_idx]] == player_val:
+                    seen_indices[seen_idx] = 1
+
+    return (
+        counts[0],
+        counts[1],
+        counts[2],
+        counts[3],
+        counts[4],
+        counts[5],
+        counts[6],
+    )

@@ -6,6 +6,11 @@ from functools import lru_cache
 from gomoku.board import Board
 from gomoku.config import BOARD_SIZE, Player
 
+try:
+    from gomoku.ai._threat_kernels import count_shapes_on_line as _count_shapes_on_line_native
+except ImportError:  # pragma: no cover - exercised when extension is not built
+    _count_shapes_on_line_native = None
+
 # ============ 棋型枚举 ============
 
 
@@ -323,6 +328,15 @@ def _count_shapes_on_line(
     line_id: int,
 ) -> tuple[int, ...]:
     """按单条线复现旧版 seen 语义，得到精确棋型计数。"""
+    if _count_shapes_on_line_native is not None:
+        return _count_shapes_on_line_native(
+            board.grid,
+            int(player),
+            direction_index,
+            line_id,
+            BOARD_SIZE,
+        )
+
     coords = _line_coords(direction_index, line_id)
     player_val = int(player)
     seen_indices: set[int] = set()
