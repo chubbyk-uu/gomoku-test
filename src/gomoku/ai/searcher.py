@@ -15,6 +15,11 @@ from gomoku.ai.threats import (
 from gomoku.board import Board
 from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
 
+try:
+    from gomoku.ai._threat_kernels import analyze_move as _analyze_move_native
+except ImportError:  # pragma: no cover - exercised when extension is not built
+    _analyze_move_native = None
+
 # 置换表条目：(depth, score, flag, best_move)
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
@@ -226,6 +231,10 @@ class AISearcher:
         player: Player,
     ) -> _MoveAnalysis:
         """对单个空位做一次局部分析，复用给胜负判断和排序评分。"""
+        if _analyze_move_native is not None:
+            is_win, score = _analyze_move_native(board.grid, row, col, int(player))
+            return bool(is_win), int(score)
+
         if board.grid[row, col] != Player.NONE:
             return False, -1
 
