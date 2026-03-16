@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gomoku.ai.evaluator import evaluate
+from gomoku.ai.threats import ThreatType, classify_moves
 from gomoku.board import Board
 from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
 
@@ -15,6 +16,7 @@ _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _ORDERING_RERANK_TOP_K = 8
 _MoveAnalysis = tuple[bool, int]
+_FORCING_SEARCH_DEPTH = 4
 
 
 @dataclass
@@ -29,6 +31,7 @@ class SearchStats:
     beta_cutoffs: int = 0
     alpha_cutoffs: int = 0
     immediate_wins: int = 0
+    forcing_wins: int = 0
     max_branching: int = 0
     completed_depth: int = 0
     timed_out: bool = False
@@ -43,6 +46,7 @@ class SearchStats:
         self.beta_cutoffs += other.beta_cutoffs
         self.alpha_cutoffs += other.alpha_cutoffs
         self.immediate_wins += other.immediate_wins
+        self.forcing_wins += other.forcing_wins
         self.max_branching = max(self.max_branching, other.max_branching)
         self.completed_depth = max(self.completed_depth, other.completed_depth)
         self.timed_out = self.timed_out or other.timed_out
@@ -266,6 +270,105 @@ class AISearcher:
         return attack_score * 2 + defense_score * 3, attack_score, defense_score
 
     @staticmethod
+    def _forcing_move_priority(threat_type: ThreatType) -> int:
+        if threat_type == ThreatType.WIN:
+            return 4
+        if threat_type == ThreatType.OPEN_FOUR:
+            return 3
+        if threat_type == ThreatType.FOUR_THREE:
+            return 2
+        if threat_type == ThreatType.BLOCK_WIN:
+            return 1
+        return 0
+
+    def _forcing_candidates(
+        self,
+        board: Board,
+        player: Player,
+        attacker: Player,
+    ) -> list[tuple[tuple[int, int], ThreatType]]:
+        """Return threat-ranked candidates for forcing search."""
+        infos = classify_moves(board, board.get_candidate_moves(), player)
+        if player == attacker:
+            allowed = {ThreatType.WIN, ThreatType.OPEN_FOUR, ThreatType.FOUR_THREE}
+        else:
+            allowed = {
+                ThreatType.WIN,
+                ThreatType.BLOCK_WIN,
+                ThreatType.OPEN_FOUR,
+                ThreatType.FOUR_THREE,
+            }
+
+        candidates = [
+            (info.move, info.threat_type) for info in infos if info.threat_type in allowed
+        ]
+        candidates.sort(
+            key=lambda item: (self._forcing_move_priority(item[1]), item[0][0], item[0][1]),
+            reverse=True,
+        )
+        return candidates
+
+    def _forcing_search(
+        self,
+        board: Board,
+        attacker: Player,
+        current_player: Player,
+        depth: int,
+    ) -> tuple[bool, Optional[tuple[int, int]]]:
+        """Search a short forcing line among high-priority threat moves only."""
+        self._check_timeout()
+        if depth <= 0:
+            return False, None
+
+        candidates = self._forcing_candidates(board, current_player, attacker)
+        if not candidates:
+            return (current_player != attacker), None
+
+        if current_player == attacker:
+            for move, threat_type in candidates:
+                if threat_type == ThreatType.WIN:
+                    return True, move
+                board.place(*move, current_player)
+                try:
+                    success, _ = self._forcing_search(
+                        board,
+                        attacker,
+                        self._opponent_of(current_player),
+                        depth - 1,
+                    )
+                finally:
+                    board.undo()
+                if success:
+                    return True, move
+            return False, None
+
+        for move, threat_type in candidates:
+            if threat_type == ThreatType.WIN:
+                return False, None
+            board.place(*move, current_player)
+            try:
+                success, _ = self._forcing_search(board, attacker, attacker, depth - 1)
+            finally:
+                board.undo()
+            if not success:
+                return False, None
+        return True, None
+
+    def _opponent_of(self, player: Player) -> Player:
+        return Player.WHITE if player == Player.BLACK else Player.BLACK
+
+    def _find_forcing_move(
+        self,
+        board: Board,
+        current_player: Player,
+    ) -> Optional[tuple[int, int]]:
+        """Try to prove a short forcing win from the current position."""
+        success, move = self._forcing_search(
+            board, current_player, current_player, _FORCING_SEARCH_DEPTH
+        )
+        return move if success else None
+
+    @staticmethod
     def _dynamic_cutoff(
         scored_moves: list[tuple[int, int, int, int, int]],
         max_candidates: int,
@@ -309,6 +412,24 @@ class AISearcher:
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
+        threat_infos = classify_moves(board, moves, current_player)
+        grouped_moves: dict[ThreatType, list[tuple[int, int]]] = {
+            threat_type: [] for threat_type in ThreatType
+        }
+        for info in threat_infos:
+            grouped_moves[info.threat_type].append(info.move)
+
+        for threat_type in (
+            ThreatType.WIN,
+            ThreatType.BLOCK_WIN,
+            ThreatType.OPEN_FOUR,
+            ThreatType.FOUR_THREE,
+        ):
+            threat_moves = grouped_moves[threat_type]
+            if threat_moves:
+                threat_moves.sort()
+                return self._prioritize_tt_move(threat_moves, tt_move)
+
         opponent = self.ai_player if current_player == self._opponent else self._opponent
         opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
@@ -469,6 +590,13 @@ class AISearcher:
             score = 100_000.0 if maximizing else -100_000.0
             self._store_tt(self._tt, h, (depth, score, "E", winning_move))
             return score, winning_move
+
+        forcing_move = self._find_forcing_move(board, current_player)
+        if forcing_move is not None:
+            stats.forcing_wins += 1
+            score = 90_000.0 if maximizing else -90_000.0
+            self._store_tt(self._tt, h, (depth, score, "E", forcing_move))
+            return score, forcing_move
 
         # --- 威胁驱动候选生成 + 动态截断 ---
         moves = self._select_search_moves(

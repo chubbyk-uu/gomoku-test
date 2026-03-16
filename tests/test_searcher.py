@@ -2,6 +2,7 @@
 
 import gomoku.ai.searcher as searcher_module
 from gomoku.ai.searcher import AISearcher
+from gomoku.ai.threats import ThreatInfo, ThreatType
 from gomoku.board import Board
 from gomoku.config import Player
 
@@ -227,6 +228,60 @@ def test_select_search_moves_restricts_to_blocks_against_immediate_loss():
     assert stats.ordering_evals == 0
 
 
+def test_select_search_moves_prioritizes_open_four(monkeypatch):
+    """阶段 2 接入后，OPEN_FOUR 应直接作为最高优先级候选返回。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    candidate_moves = [(7, 7), (7, 8), (8, 8)]
+
+    monkeypatch.setattr(
+        searcher_module,
+        "classify_moves",
+        lambda _board, _moves, _player: [
+            ThreatInfo((7, 7), ThreatType.OTHER, 100, 10),
+            ThreatInfo((7, 8), ThreatType.OPEN_FOUR, 80_000, 100),
+            ThreatInfo((8, 8), ThreatType.OTHER, 100, 10),
+        ],
+    )
+
+    moves = searcher._select_search_moves(
+        board,
+        candidate_moves,
+        Player.BLACK,
+        tt_move=None,
+        stats=searcher.last_search_stats,
+    )
+
+    assert moves == [(7, 8)]
+
+
+def test_select_search_moves_prioritizes_four_three(monkeypatch):
+    """若不存在更高等级威胁，FOUR_THREE 应优先于普通候选。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    candidate_moves = [(7, 7), (7, 8), (8, 8)]
+
+    monkeypatch.setattr(
+        searcher_module,
+        "classify_moves",
+        lambda _board, _moves, _player: [
+            ThreatInfo((7, 7), ThreatType.OTHER, 100, 10),
+            ThreatInfo((7, 8), ThreatType.FOUR_THREE, 10_000, 100),
+            ThreatInfo((8, 8), ThreatType.OTHER, 100, 10),
+        ],
+    )
+
+    moves = searcher._select_search_moves(
+        board,
+        candidate_moves,
+        Player.BLACK,
+        tt_move=None,
+        stats=searcher.last_search_stats,
+    )
+
+    assert moves == [(7, 8)]
+
+
 def test_dynamic_cutoff_shrinks_for_critical_scores():
     """强威胁分数应触发更窄的动态截断。"""
     scored_moves = [
@@ -289,6 +344,47 @@ def test_rerank_top_moves_keeps_suffix_order():
     )
 
     assert reranked == scored_moves
+
+
+def test_find_forcing_move_detects_open_four_sequence():
+    """开放四应被 forcing search 识别为可证明的强制赢线。"""
+    board = Board()
+    board.place(7, 4, Player.BLACK)
+    board.place(7, 5, Player.BLACK)
+    board.place(7, 6, Player.BLACK)
+    board.place(6, 5, Player.WHITE)
+    board.place(8, 5, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+
+    assert searcher._find_forcing_move(board, Player.BLACK) == (7, 7)
+
+
+def test_find_forcing_move_returns_none_without_forcing_line():
+    """普通局面不应误判为强制赢。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    board.place(8, 8, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+
+    assert searcher._find_forcing_move(board, Player.BLACK) is None
+
+
+def test_forcing_search_updates_stats_when_used():
+    """forcing search 命中时应记录统计并返回对应着法。"""
+    board = Board()
+    board.place(7, 4, Player.BLACK)
+    board.place(7, 5, Player.BLACK)
+    board.place(7, 6, Player.BLACK)
+    board.place(6, 5, Player.WHITE)
+    board.place(8, 5, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    move = searcher.find_best_move(board)
+
+    assert move == (7, 7)
+    assert searcher.last_search_stats.forcing_wins >= 1
 
 
 def test_search_stats_populated_after_search():
