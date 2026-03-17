@@ -1,6 +1,6 @@
 # 五子棋 (Gomoku)
 
-基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、威胁分类、短 forcing search，以及若干 `Cython` 热点加速。
+基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、威胁分类、短 forcing search、killer heuristic，以及若干 `Cython` 热点加速。
 
 ## 当前状态
 
@@ -8,19 +8,24 @@
 - 支持人机对弈，玩家可选执黑或执白
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
+- 支持独立 `VCF` benchmark / profiling
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
-  - 最大搜索深度：`6`
+  - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
-  - 候选点上限：`15`
-  - 候选邻域半径：`2`
+  - 候选点上限：`20`
+  - 候选邻域半径：`1`
+  - `VCF` 最大深度：`10`
+  - `VCF` 候选上限：`16`
 
 ## 主要特性
 
 - `Minimax + Alpha-Beta` 剪枝
 - 迭代加深（Iterative Deepening）
 - Zobrist 哈希置换表（TT）
+- Killer Heuristic
 - 评估缓存
+- 独立 `VCF` 战术证明器
 - 候选点动态截断与两阶段排序
 - 威胁分类与短 forcing search
 - 一步成五预检查
@@ -111,20 +116,40 @@ python -m gomoku
 
 ### 搜索
 
-AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/searcher.py)。
+AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/searcher.py)。
 
 当前搜索流程大致包括：
 
+- 一步成五预检查
+- 一步防输预检查
+- `VCF` 必胜 / 防杀预检查
 - 迭代加深，从 `depth=1` 逐层加深到最大深度
 - 置换表复用历史搜索结果
-- 一步成五预检查
 - 短 forcing search
+- killer move 优先级
 - 威胁优先候选生成
 - 普通候选的局部粗排、动态截断、精排
 
+### VCF
+
+`VCF` 求解器位于 [src/gomoku/ai/vcf.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/vcf.py)。
+
+当前实现特性包括：
+
+- 独立 `VCF` 必胜搜索
+- 独立 `VCF` 防杀搜索
+- 原生批量一步成五检测复用
+- `Cython` 原生预筛 `vcf_move_probes`
+- 独立 `VCFStats` profiling 统计
+
+当前 `VCF` 采用“两段式”：
+
+- 先用局部原生 probe / 威胁分类拿到强攻种子
+- 再对候选真实落子，验证是否直接赢或制造下一步立即赢
+
 ### 评估函数
 
-评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/evaluator.py)。
+评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/evaluator.py)。
 
 当前使用模式识别打分，覆盖：
 
@@ -145,7 +170,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 
 ### 威胁分类
 
-威胁分类位于 [src/gomoku/ai/threats.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/threats.py)。
+威胁分类位于 [src/gomoku/ai/threats.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/threats.py)。
 
 当前会识别和使用的核心类别包括：
 
@@ -159,7 +184,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 
 ### Cython 热点
 
-热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
+热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
 
 当前已下沉的热点包括：
 
@@ -167,6 +192,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 - 批量 quick pattern summaries
 - 单点 move analysis
 - 批量 move analysis
+- `VCF` move probes
 - 单线 shape counting
 
 ## 项目结构
@@ -186,7 +212,8 @@ gomoku-test/
 │   │   ├── evaluator.py
 │   │   ├── puzzles.py
 │   │   ├── searcher.py
-│   │   └── threats.py
+│   │   ├── threats.py
+│   │   └── vcf.py
 │   └── ui/
 │       ├── __init__.py
 │       └── renderer.py
@@ -204,13 +231,14 @@ gomoku-test/
 │   ├── benchmark.py
 │   ├── engine_worker.py
 │   ├── run_benchmark.py
-│   └── run_puzzle_benchmark.py
+│   ├── run_puzzle_benchmark.py
+│   └── run_vcf_benchmark.py
 └── setup.py
 ```
 
 ## 固定题库
 
-固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
+固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
 
 - 一步杀
 - 必防冲四
@@ -232,6 +260,32 @@ PYTHONPATH=src python tools/run_puzzle_benchmark.py --depth 4 --repeat 1
 ```bash
 PYTHONPATH=src python tools/run_puzzle_benchmark.py --depth 4 --category judgment
 ```
+
+## VCF Benchmark
+
+运行独立 `VCF` benchmark：
+
+```bash
+PYTHONPATH=src python tools/run_vcf_benchmark.py --depth 8 --repeat 10
+```
+
+只看某一种模式：
+
+```bash
+PYTHONPATH=src python tools/run_vcf_benchmark.py --depth 8 --repeat 10 --mode block
+```
+
+输出会包含：
+
+- `avg_time`
+- `nodes`
+- `cache`
+- `attack`
+- `defense`
+- `prefilter`
+- `classify`
+- `immediate`
+- `depth`
 
 ## 自对弈 Benchmark
 
@@ -297,18 +351,22 @@ ruff check .
 - 评估器棋型识别与增量计数
 - 搜索结果稳定性
 - TT / 缓存复用
+- `VCF` 求解与 benchmark 统计
 - 题库回归
 - benchmark JSON 输出
 
 ## 可调参数
 
-配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/config.py)。
+配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/config.py)。
 
 ```python
-AI_SEARCH_DEPTH = 6
+AI_SEARCH_DEPTH = 5
 AI_SEARCH_TIME_LIMIT_S = None
-AI_MAX_CANDIDATES = 15
-AI_CANDIDATE_RANGE = 2
+AI_MAX_CANDIDATES = 20
+AI_CANDIDATE_RANGE = 1
+AI_VCF_ENABLED = True
+AI_VCF_MAX_DEPTH = 10
+AI_VCF_MAX_CANDIDATES = 16
 AI_MOVE_DELAY_MS = 100
 ```
 
@@ -317,4 +375,4 @@ AI_MOVE_DELAY_MS = 100
 - 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
 - 想要更强棋力：优先改搜索策略/威胁处理，其次再提高深度
 - 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
-- `AI_CANDIDATE_RANGE` 先保持 `2`，除非结合题库和 benchmark 做 A/B 验证
+- `AI_CANDIDATE_RANGE` 和 `AI_VCF_MAX_DEPTH` 建议结合题库与对弈 benchmark 做 A/B 验证

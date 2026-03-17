@@ -278,6 +278,48 @@ cpdef list analyze_moves(
     return results
 
 
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef list vcf_move_probes(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    object moves,
+    int player,
+):
+    """Return lightweight VCF probes for a batch of candidate moves.
+
+    Each result is a tuple:
+      (is_win, is_open_four, has_potential, score)
+
+    The Python VCF layer uses this as a cheap native prefilter before exact
+    threat classification, keeping the recursive semantics in Python while
+    moving the hottest local analysis into Cython.
+    """
+    cdef list results = []
+    cdef int row
+    cdef int col
+    cdef object move
+    cdef tuple summary
+    cdef tuple analysis
+
+    for move in moves:
+        row = cython.cast(int, move[0])
+        col = cython.cast(int, move[1])
+        summary = _quick_pattern_summary_impl(grid, row, col, player)
+        if summary[0]:
+            results.append((True, False, False, 200000))
+            continue
+        if summary[1]:
+            analysis = _analyze_move_impl(grid, row, col, player)
+            results.append((False, True, False, cython.cast(int, analysis[1])))
+            continue
+        if summary[2]:
+            analysis = _analyze_move_impl(grid, row, col, player)
+            results.append((False, False, True, cython.cast(int, analysis[1])))
+            continue
+        results.append((False, False, False, 0))
+    return results
+
+
 cdef inline int _match_shape_code(int line[9]):
     cdef int start
     cdef int end

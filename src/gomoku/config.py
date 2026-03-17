@@ -32,10 +32,13 @@ LINE_COLOR: tuple[int, int, int] = (0, 0, 0)  # 棋盘线条颜色
 RED: tuple[int, int, int] = (255, 0, 0)  # 提示文字颜色
 
 # ============ AI Configuration ============
-AI_SEARCH_DEPTH: int = 6  # Minimax 最大搜索深度上限
+AI_SEARCH_DEPTH: int = 5  # Minimax 最大搜索深度上限
 AI_SEARCH_TIME_LIMIT_S: float | None = None  # 可选限时；None 表示仅按最大深度搜索
 AI_MAX_CANDIDATES: int = 20  # 每层最多搜索候选点数（move ordering 后截断，减少搜索空间）
-AI_CANDIDATE_RANGE: int = 2  # 候选点邻域半径；越大越宽，越小越快但更容易漏点
+AI_CANDIDATE_RANGE: int = 1  # 候选点邻域半径；越大越宽，越小越快但更容易漏点
+AI_VCF_ENABLED: bool = True  # 是否启用 VCF 战术证明器
+AI_VCF_MAX_DEPTH: int = 10  # VCF 最大递归深度（以攻击方回合层数计）
+AI_VCF_MAX_CANDIDATES: int = 16  # VCF 每层最多扩展的强制进攻候选数
 AI_MOVE_DELAY_MS: int = 10  # AI 落子前的延时 (ms), 便于观察
 AI_TT_MAX_SIZE: int = 100_000  # 置换表最大条目数；超限后清空，避免长局无限增长
 AI_EVAL_CACHE_MAX_SIZE: int = 100_000  # 评估缓存最大条目数；超限后清空

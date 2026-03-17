@@ -12,8 +12,17 @@ from gomoku.ai.threats import (
     classify_defense_moves,
     classify_moves,
 )
+from gomoku.ai.vcf import VCFSolver
 from gomoku.board import Board
-from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
+from gomoku.config import (
+    AI_EVAL_CACHE_MAX_SIZE,
+    AI_MAX_CANDIDATES,
+    AI_TT_MAX_SIZE,
+    AI_VCF_ENABLED,
+    AI_VCF_MAX_CANDIDATES,
+    AI_VCF_MAX_DEPTH,
+    Player,
+)
 
 try:
     from gomoku.ai._threat_kernels import analyze_move as _analyze_move_native
@@ -87,8 +96,10 @@ class AISearcher:
         self.time_limit_s = time_limit_s
         self._opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
         self._tt: dict[int, _TTEntry] = {}
+        self._killers: dict[int, list[tuple[int, int]]] = {}
         self._eval_cache: dict[int, int] = {}
         self._threat_cache: dict[tuple[int, int, str], list] = {}
+        self._vcf = VCFSolver(max_candidates=AI_VCF_MAX_CANDIDATES)
         self.last_search_stats = SearchStats()
         self._deadline: Optional[float] = None
 
@@ -105,9 +116,48 @@ class AISearcher:
             最优落子坐标 (row, col)；无候选点时返回 None。
         """
         self.last_search_stats = SearchStats()
+        self._killers.clear()
         self._deadline = (
             time.perf_counter() + self.time_limit_s if self.time_limit_s is not None else None
         )
+
+        moves = board.get_candidate_moves()
+        if not moves:
+            self._deadline = None
+            return None
+
+        immediate_wins = self._find_immediate_winning_moves(board, moves, self.ai_player)
+        if immediate_wins:
+            self.last_search_stats.immediate_wins = 1
+            self.last_search_stats.completed_depth = 1
+            self._deadline = None
+            return immediate_wins[0]
+
+        opponent_immediate_wins = self._find_immediate_winning_moves(board, moves, self._opponent)
+        if opponent_immediate_wins:
+            self.last_search_stats.completed_depth = 1
+            self._deadline = None
+            return opponent_immediate_wins[0]
+
+        if AI_VCF_ENABLED:
+            self._vcf.reset()
+
+            vcf_move = self._vcf.find_winning_move(board, self.ai_player, AI_VCF_MAX_DEPTH)
+            if vcf_move is not None:
+                self._deadline = None
+                return vcf_move
+
+            vcf_block = self._vcf.find_blocking_move(board, self.ai_player, AI_VCF_MAX_DEPTH)
+            if vcf_block is not None:
+                self._deadline = None
+                return vcf_block
+
+        forcing_move = self._find_forcing_move(board, self.ai_player)
+        if forcing_move is not None:
+            self.last_search_stats.forcing_wins = 1
+            self.last_search_stats.completed_depth = 1
+            self._deadline = None
+            return forcing_move
 
         best_move: Optional[tuple[int, int]] = None
         for current_depth in range(1, self.depth + 1):
@@ -480,10 +530,12 @@ class AISearcher:
         current_player: Player,
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
+        depth: int = 0,
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
         opponent_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
         """分层生成候选点，并对普通局面执行动态截断。"""
+        killer_moves = self._killers.get(depth, [])
         defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
         }
@@ -500,7 +552,7 @@ class AISearcher:
             threat_moves = defense_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_tt_move(threat_moves, tt_move)
+                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
 
         attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
@@ -518,7 +570,7 @@ class AISearcher:
             threat_moves = attack_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_tt_move(threat_moves, tt_move)
+                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
 
         opponent = self.ai_player if current_player == self._opponent else self._opponent
         if opponent_move_analysis is None:
@@ -526,7 +578,7 @@ class AISearcher:
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
             ordered_blocks = sorted(blocking_moves)
-            return self._prioritize_tt_move(ordered_blocks, tt_move)
+            return self._prioritize_special_moves(ordered_blocks, tt_move, killer_moves)
 
         if current_move_analysis is None:
             current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
@@ -550,7 +602,9 @@ class AISearcher:
         reranked = self._rerank_top_moves(
             board, selected_moves, rerank_limit, current_player, stats
         )
-        return self._prioritize_tt_move([(r, c) for r, c, _, _, _ in reranked], tt_move)
+        return self._prioritize_special_moves(
+            [(r, c) for r, c, _, _, _ in reranked], tt_move, killer_moves
+        )
 
     def _rerank_top_moves(
         self,
@@ -592,6 +646,38 @@ class AISearcher:
         if idx == 0:
             return moves
         return [moves[idx], *moves[:idx], *moves[idx + 1 :]]
+
+    @classmethod
+    def _prioritize_special_moves(
+        cls,
+        moves: list[tuple[int, int]],
+        tt_move: Optional[tuple[int, int]],
+        killer_moves: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """Prioritize TT best move first, then killer moves for the same depth."""
+        ordered = cls._prioritize_tt_move(moves, tt_move)
+        if not killer_moves:
+            return ordered
+
+        killers_in_moves = [move for move in killer_moves if move in ordered and move != tt_move]
+        if not killers_in_moves:
+            return ordered
+
+        front: list[tuple[int, int]] = []
+        if tt_move is not None and tt_move in ordered:
+            front.append(tt_move)
+        front.extend(killers_in_moves)
+        seen = set(front)
+        tail = [move for move in ordered if move not in seen]
+        return front + tail
+
+    def _add_killer(self, depth: int, move: tuple[int, int]) -> None:
+        killers = self._killers.setdefault(depth, [])
+        if move in killers:
+            killers.remove(move)
+        killers.insert(0, move)
+        if len(killers) > 2:
+            killers.pop()
 
     # ------------------------------------------------------------------
     # Internal
@@ -693,6 +779,7 @@ class AISearcher:
             current_player,
             tt_move,
             stats,
+            depth=depth,
             current_move_analysis=current_move_analysis,
             opponent_move_analysis=opponent_move_analysis,
         )
@@ -715,6 +802,7 @@ class AISearcher:
                 if beta <= alpha:
                     # beta 截断：真实值 >= best_score，存为下界
                     stats.beta_cutoffs += 1
+                    self._add_killer(depth, (row, col))
                     self._store_tt(self._tt, h, (depth, best_score, "L", best_move))
                     return best_score, best_move
             # 无截断：判断是精确值还是上界（未能超过 alpha_orig）
@@ -737,6 +825,7 @@ class AISearcher:
                 if beta <= alpha:
                     # alpha 截断：真实值 <= best_score，存为上界
                     stats.alpha_cutoffs += 1
+                    self._add_killer(depth, (row, col))
                     self._store_tt(self._tt, h, (depth, best_score, "U", best_move))
                     return best_score, best_move
             # 无截断：所有候选点均已遍历，best_score 是精确最小值

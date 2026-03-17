@@ -105,6 +105,50 @@ def test_immediate_win_short_circuits_ordering():
     assert searcher.last_search_stats.completed_depth == 1
 
 
+def test_find_best_move_prefers_vcf_winning_move_before_forcing_search(monkeypatch):
+    """VCF 必胜时，应在 forcing search 和 minimax 前直接返回。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=3)
+
+    monkeypatch.setattr(searcher, "_find_immediate_winning_moves", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(searcher._vcf, "find_winning_move", lambda *_args, **_kwargs: (7, 3))
+    monkeypatch.setattr(searcher._vcf, "find_blocking_move", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        searcher,
+        "_find_forcing_move",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("forcing should not run")),
+    )
+    monkeypatch.setattr(
+        searcher,
+        "_minimax",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("minimax should not run")),
+    )
+
+    assert searcher.find_best_move(board) == (7, 3)
+
+
+def test_find_best_move_uses_vcf_blocking_move_before_forcing_search(monkeypatch):
+    """对手存在 VCF 必胜线时，应优先返回 VCF 防杀点。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=3)
+
+    monkeypatch.setattr(searcher, "_find_immediate_winning_moves", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(searcher._vcf, "find_winning_move", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(searcher._vcf, "find_blocking_move", lambda *_args, **_kwargs: (6, 6))
+    monkeypatch.setattr(
+        searcher,
+        "_find_forcing_move",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("forcing should not run")),
+    )
+    monkeypatch.setattr(
+        searcher,
+        "_minimax",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("minimax should not run")),
+    )
+
+    assert searcher.find_best_move(board) == (6, 6)
+
+
 # ---------------------------------------------------------------------------
 # 置换表 (TT) 测试
 # ---------------------------------------------------------------------------
@@ -158,6 +202,31 @@ def test_prioritize_tt_move_only_reorders_existing_candidate():
 
     assert searcher._prioritize_tt_move(moves, (7, 8)) == [(7, 8), (7, 7), (8, 8)]
     assert searcher._prioritize_tt_move(moves, (9, 9)) == moves
+
+
+def test_prioritize_special_moves_prefers_tt_then_killers():
+    """候选排序应优先 TT best move，其次同层 killer moves。"""
+    moves = [(7, 7), (7, 8), (8, 8), (8, 7)]
+
+    ordered = AISearcher._prioritize_special_moves(
+        moves,
+        tt_move=(8, 8),
+        killer_moves=[(7, 8), (8, 7)],
+    )
+
+    assert ordered == [(8, 8), (7, 8), (8, 7), (7, 7)]
+
+
+def test_add_killer_keeps_two_most_recent_unique_moves():
+    """killer 表应保留最近的两个不同截断着法。"""
+    searcher = _make_searcher()
+
+    searcher._add_killer(3, (7, 7))
+    searcher._add_killer(3, (7, 8))
+    searcher._add_killer(3, (8, 8))
+    searcher._add_killer(3, (7, 8))
+
+    assert searcher._killers[3] == [(7, 8), (8, 8)]
 
 
 def test_find_immediate_winning_moves_returns_all_wins():
@@ -504,6 +573,8 @@ def test_forcing_search_updates_stats_when_used():
     board.place(8, 5, Player.WHITE)
 
     searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    searcher._vcf.find_winning_move = lambda *_args, **_kwargs: None
+    searcher._vcf.find_blocking_move = lambda *_args, **_kwargs: None
     move = searcher.find_best_move(board)
 
     assert move in {(7, 3), (7, 7)}
