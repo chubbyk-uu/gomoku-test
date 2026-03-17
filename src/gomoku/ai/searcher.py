@@ -38,6 +38,7 @@ _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _ORDERING_RERANK_TOP_K = 8
 _MoveAnalysis = tuple[bool, int]
 _FORCING_SEARCH_DEPTH = 4
+_FORCING_SEARCH_ENABLED = False
 
 
 @dataclass
@@ -73,6 +74,18 @@ class SearchStats:
         self.timed_out = self.timed_out or other.timed_out
 
 
+@dataclass
+class DecisionTrace:
+    """Lightweight trace for understanding which stage selected the move."""
+
+    source: str = ""
+    move: Optional[tuple[int, int]] = None
+    completed_depth: int = 0
+    score: Optional[float] = None
+    root_candidates: list[tuple[int, int]] | None = None
+    notes: list[str] | None = None
+
+
 class SearchTimeout(Exception):
     """Raised when iterative deepening exceeds the configured time budget."""
 
@@ -101,6 +114,7 @@ class AISearcher:
         self._threat_cache: dict[tuple[int, int, str], list] = {}
         self._vcf = VCFSolver(max_candidates=AI_VCF_MAX_CANDIDATES)
         self.last_search_stats = SearchStats()
+        self.last_decision_trace = DecisionTrace()
         self._deadline: Optional[float] = None
 
     def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
@@ -116,6 +130,7 @@ class AISearcher:
             最优落子坐标 (row, col)；无候选点时返回 None。
         """
         self.last_search_stats = SearchStats()
+        self.last_decision_trace = DecisionTrace()
         self._killers.clear()
         self._deadline = (
             time.perf_counter() + self.time_limit_s if self.time_limit_s is not None else None
@@ -123,6 +138,10 @@ class AISearcher:
 
         moves = board.get_candidate_moves()
         if not moves:
+            self.last_decision_trace = DecisionTrace(
+                source="no_candidates",
+                root_candidates=[],
+            )
             self._deadline = None
             return None
 
@@ -130,12 +149,24 @@ class AISearcher:
         if immediate_wins:
             self.last_search_stats.immediate_wins = 1
             self.last_search_stats.completed_depth = 1
+            self.last_decision_trace = DecisionTrace(
+                source="immediate_win",
+                move=immediate_wins[0],
+                completed_depth=1,
+                root_candidates=immediate_wins,
+            )
             self._deadline = None
             return immediate_wins[0]
 
         opponent_immediate_wins = self._find_immediate_winning_moves(board, moves, self._opponent)
         if opponent_immediate_wins:
             self.last_search_stats.completed_depth = 1
+            self.last_decision_trace = DecisionTrace(
+                source="immediate_block",
+                move=opponent_immediate_wins[0],
+                completed_depth=1,
+                root_candidates=opponent_immediate_wins,
+            )
             self._deadline = None
             return opponent_immediate_wins[0]
 
@@ -144,22 +175,47 @@ class AISearcher:
 
             vcf_move = self._vcf.find_winning_move(board, self.ai_player, AI_VCF_MAX_DEPTH)
             if vcf_move is not None:
+                self.last_decision_trace = DecisionTrace(
+                    source="vcf_win",
+                    move=vcf_move,
+                    completed_depth=AI_VCF_MAX_DEPTH,
+                    notes=[
+                        f"vcf_nodes={self._vcf.last_stats.nodes}",
+                        f"vcf_cache_hits={self._vcf.last_stats.cache_hits}",
+                    ],
+                )
                 self._deadline = None
                 return vcf_move
 
             vcf_block = self._vcf.find_blocking_move(board, self.ai_player, AI_VCF_MAX_DEPTH)
             if vcf_block is not None:
+                self.last_decision_trace = DecisionTrace(
+                    source="vcf_block",
+                    move=vcf_block,
+                    completed_depth=AI_VCF_MAX_DEPTH,
+                    notes=[
+                        f"vcf_nodes={self._vcf.last_stats.nodes}",
+                        f"vcf_cache_hits={self._vcf.last_stats.cache_hits}",
+                    ],
+                )
                 self._deadline = None
                 return vcf_block
 
-        forcing_move = self._find_forcing_move(board, self.ai_player)
-        if forcing_move is not None:
-            self.last_search_stats.forcing_wins = 1
-            self.last_search_stats.completed_depth = 1
-            self._deadline = None
-            return forcing_move
+        if _FORCING_SEARCH_ENABLED:
+            forcing_move = self._find_forcing_move(board, self.ai_player)
+            if forcing_move is not None:
+                self.last_search_stats.forcing_wins = 1
+                self.last_search_stats.completed_depth = 1
+                self.last_decision_trace = DecisionTrace(
+                    source="forcing_search",
+                    move=forcing_move,
+                    completed_depth=1,
+                )
+                self._deadline = None
+                return forcing_move
 
         best_move: Optional[tuple[int, int]] = None
+        best_score: Optional[float] = None
         for current_depth in range(1, self.depth + 1):
             iteration_stats = SearchStats()
             try:
@@ -170,6 +226,7 @@ class AISearcher:
                     math.inf,
                     maximizing=True,
                     stats=iteration_stats,
+                    root_depth=current_depth,
                 )
             except SearchTimeout:
                 self.last_search_stats.timed_out = True
@@ -178,6 +235,7 @@ class AISearcher:
             iteration_stats.completed_depth = current_depth
             self.last_search_stats.merge(iteration_stats)
             best_move = move
+            best_score = score
 
             if abs(score) >= 100_000.0:
                 break
@@ -187,6 +245,10 @@ class AISearcher:
                 break
 
         self._deadline = None
+        self.last_decision_trace.source = "minimax"
+        self.last_decision_trace.move = best_move
+        self.last_decision_trace.completed_depth = self.last_search_stats.completed_depth
+        self.last_decision_trace.score = best_score
         return best_move
 
     def _evaluate(self, board: Board) -> int:
@@ -691,6 +753,7 @@ class AISearcher:
         beta: float,
         maximizing: bool,
         stats: SearchStats,
+        root_depth: int,
     ) -> tuple[float, Optional[tuple[int, int]]]:
         """Minimax 递归搜索（Alpha-Beta 剪枝 + 置换表）。
 
@@ -783,6 +846,8 @@ class AISearcher:
             current_move_analysis=current_move_analysis,
             opponent_move_analysis=opponent_move_analysis,
         )
+        if maximizing and depth == root_depth:
+            self.last_decision_trace.root_candidates = moves[:]
 
         best_move: Optional[tuple[int, int]] = None
 
@@ -792,7 +857,15 @@ class AISearcher:
                 self._check_timeout()
                 board.place(row, col, current_player)
                 try:
-                    score, _ = self._minimax(board, depth - 1, alpha, beta, False, stats)
+                    score, _ = self._minimax(
+                        board,
+                        depth - 1,
+                        alpha,
+                        beta,
+                        False,
+                        stats,
+                        root_depth,
+                    )
                 finally:
                     board.undo()
                 if score > best_score:
@@ -815,7 +888,15 @@ class AISearcher:
                 self._check_timeout()
                 board.place(row, col, current_player)
                 try:
-                    score, _ = self._minimax(board, depth - 1, alpha, beta, True, stats)
+                    score, _ = self._minimax(
+                        board,
+                        depth - 1,
+                        alpha,
+                        beta,
+                        True,
+                        stats,
+                        root_depth,
+                    )
                 finally:
                     board.undo()
                 if score < best_score:

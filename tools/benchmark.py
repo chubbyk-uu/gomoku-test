@@ -152,18 +152,24 @@ def _play_game(
         if num_moves == 0:
             move = _random_opening_move()
             elapsed_s = 0.0
+            last_stats = None
+            last_trace = None
         elif current == Player.BLACK:
             t0 = time.perf_counter()
             move = searcher_black.find_best_move(board)
             elapsed_s = time.perf_counter() - t0
             times_black.append(elapsed_s)
             stats_black.append(searcher_black.last_search_stats)
+            last_stats = searcher_black.last_search_stats.__dict__
+            last_trace = searcher_black.last_decision_trace
         else:
             t0 = time.perf_counter()
             move = searcher_white.find_best_move(board)
             elapsed_s = time.perf_counter() - t0
             times_white.append(elapsed_s)
             stats_white.append(searcher_white.last_search_stats)
+            last_stats = searcher_white.last_search_stats.__dict__
+            last_trace = searcher_white.last_decision_trace
 
         if move is None:
             return None, num_moves, move_records  # no candidates — treat as draw
@@ -176,6 +182,8 @@ def _play_game(
                 "row": row,
                 "col": col,
                 "elapsed_ms": round(elapsed_s * 1000, 3),
+                "stats": last_stats,
+                "trace": last_trace,
             }
         )
         board.place(row, col, current)
@@ -204,6 +212,7 @@ class _EngineWrapper:
         self._proc: subprocess.Popen[str] | None = None
         self._searcher: AISearcher | None = None
         self.last_search_stats = SearchStats()
+        self.last_decision_trace: dict | None = None
 
         if self._repo_root is None:
             self._searcher = AISearcher(depth=depth, ai_player=ai_player)
@@ -231,6 +240,8 @@ class _EngineWrapper:
         if self._searcher is not None:
             move = self._searcher.find_best_move(board)
             self.last_search_stats = self._searcher.last_search_stats
+            trace = getattr(self._searcher, "last_decision_trace", None)
+            self.last_decision_trace = trace.__dict__ if trace is not None else None
             return move
 
         assert self._proc is not None
@@ -250,6 +261,7 @@ class _EngineWrapper:
         if "error" in response:
             raise RuntimeError(response["error"])
         self.last_search_stats = SearchStats(**response["stats"])
+        self.last_decision_trace = response.get("trace")
         move = response["move"]
         return tuple(move) if move is not None else None
 

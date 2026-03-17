@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -33,7 +34,14 @@ def main() -> None:
     from gomoku.config import Player
 
     ai_player = Player[args.ai_player]
-    searcher = AISearcher(depth=args.depth, ai_player=ai_player, time_limit_s=None)
+    init_signature = inspect.signature(AISearcher.__init__)
+    init_kwargs = {
+        "depth": args.depth,
+        "ai_player": ai_player,
+    }
+    if "time_limit_s" in init_signature.parameters:
+        init_kwargs["time_limit_s"] = None
+    searcher = AISearcher(**init_kwargs)
 
     for raw_line in sys.stdin:
         line = raw_line.strip()
@@ -50,11 +58,14 @@ def main() -> None:
         try:
             board = _build_board(repo_root, request["moves"])
             move = searcher.find_best_move(board)
+            stats = getattr(searcher, "last_search_stats", None)
+            trace = getattr(searcher, "last_decision_trace", None)
             print(
                 json.dumps(
                     {
                         "move": list(move) if move is not None else None,
-                        "stats": searcher.last_search_stats.__dict__,
+                        "stats": stats.__dict__ if stats is not None else {},
+                        "trace": trace.__dict__ if trace is not None else None,
                     }
                 ),
                 flush=True,
