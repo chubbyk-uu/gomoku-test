@@ -538,6 +538,38 @@ def test_rerank_top_moves_keeps_suffix_order():
     assert reranked == scored_moves
 
 
+def test_select_search_moves_uses_custom_rerank_top_k(monkeypatch):
+    """根节点应允许使用比默认更大的 rerank 前缀。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    candidate_moves = [(7, 7), (7, 8), (8, 7), (8, 8)]
+    monkeypatch.setattr(searcher, "_classify_moves_cached", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        searcher,
+        "_analyze_moves_for_player",
+        lambda _board, moves, _player: {move: (False, 100 - idx) for idx, move in enumerate(moves)},
+    )
+
+    captured = {}
+
+    def fake_rerank(_board, scored_moves, rerank_limit, current_player, stats):
+        captured["rerank_limit"] = rerank_limit
+        return scored_moves
+
+    monkeypatch.setattr(searcher, "_rerank_top_moves", fake_rerank)
+
+    searcher._select_search_moves(
+        board,
+        candidate_moves,
+        Player.BLACK,
+        tt_move=None,
+        stats=searcher.last_search_stats,
+        rerank_top_k=3,
+    )
+
+    assert captured["rerank_limit"] == 3
+
+
 def test_find_forcing_move_detects_open_four_sequence():
     """开放四应被 forcing search 识别为可证明的强制赢线。"""
     board = Board()
@@ -640,6 +672,27 @@ def test_quiescence_extends_forcing_tactical_move():
 
     assert move in {(7, 3), (7, 8)}
     assert score >= 100_000
+
+
+def test_select_quiescence_moves_respects_candidate_cap(monkeypatch):
+    """静稳搜索每层只应扩展有限个战术候选，避免分支失控。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    monkeypatch.setattr(searcher_module, "AI_QUIESCENCE_MAX_CANDIDATES", 2)
+    monkeypatch.setattr(
+        searcher,
+        "_analyze_moves_for_player",
+        lambda *_args, **_kwargs: {
+            (7, 7): (True, 0),
+            (7, 8): (True, 0),
+            (8, 7): (True, 0),
+        },
+    )
+    monkeypatch.setattr(board, "get_candidate_moves", lambda: [(7, 7), (7, 8), (8, 7)])
+
+    moves = searcher._select_quiescence_moves(board, Player.BLACK, None)
+
+    assert moves == [(7, 7), (7, 8)]
 
 
 def test_search_stats_populated_after_search():

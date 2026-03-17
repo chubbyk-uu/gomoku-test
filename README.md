@@ -1,6 +1,6 @@
 # 五子棋 (Gomoku)
 
-基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、威胁分类、短 forcing search、killer heuristic，以及若干 `Cython` 热点加速。
+基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、受限 quiescence、威胁分类、内部 forcing search、killer heuristic，以及若干 `Cython` 热点加速。
 
 ## 当前状态
 
@@ -9,14 +9,18 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
+- 当前稳定版本保留：`VCF + quiescence + minimax`，主入口 forcing search 默认关闭
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`20`
-  - 候选邻域半径：`1`
+  - 候选邻域半径：`2`
+  - 根节点 rerank：`8`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
+  - quiescence 最大额外 ply：`8`
+  - quiescence 候选上限：`3`
 
 ## 主要特性
 
@@ -26,8 +30,9 @@
 - Killer Heuristic
 - 评估缓存
 - 独立 `VCF` 战术证明器
+- 受限 quiescence（仅扩展高优先级战术手）
 - 候选点动态截断与两阶段排序
-- 威胁分类与短 forcing search
+- 威胁分类与内部 forcing search
 - 一步成五预检查
 - 增量候选点维护
 - 增量评估状态缓存
@@ -55,6 +60,16 @@ pip install pygame numpy
 ```
 
 ### 启用 Cython 加速
+
+先编译 `Cython` 扩展，再做任何性能测试或和 `zhou` 的对战对比。
+
+原因：
+
+- 当前搜索大量依赖局部分析、批量 move analysis、`VCF` probe 等热点
+- 如果没有原生扩展，运行时会回退到纯 Python 路径
+- 纯 Python fallback 的速度和对战结果都不适合拿来做正式 benchmark
+
+简短地说：不先编译 `Cython`，就不要比较性能。
 
 项目中的 `Cython` 扩展是可选加速层，不影响功能正确性：
 
@@ -124,8 +139,9 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 - 一步防输预检查
 - `VCF` 必胜 / 防杀预检查
 - 迭代加深，从 `depth=1` 逐层加深到最大深度
+- 叶子 quiescence，避免明显战术未收束时直接静态评估
 - 置换表复用历史搜索结果
-- 短 forcing search
+- 内部 forcing search（仅在 `minimax` 递归内作为辅助，不在主入口直接返回）
 - killer move 优先级
 - 威胁优先候选生成
 - 普通候选的局部粗排、动态截断、精排
@@ -194,6 +210,12 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 - 批量 move analysis
 - `VCF` move probes
 - 单线 shape counting
+
+性能建议：
+
+- 先执行 `python setup.py build_ext --inplace`
+- 再运行题库 benchmark / 自对弈 / 与 `zhou` 的 head-to-head
+- 如果没有 `.so` / `.pyd`，先不要解读时间数据
 
 ## 项目结构
 
@@ -363,11 +385,14 @@ ruff check .
 AI_SEARCH_DEPTH = 5
 AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 20
-AI_CANDIDATE_RANGE = 1
+AI_CANDIDATE_RANGE = 2
+AI_ROOT_RERANK_TOP_K = 8
 AI_VCF_ENABLED = True
 AI_VCF_MAX_DEPTH = 10
 AI_VCF_MAX_CANDIDATES = 16
-AI_MOVE_DELAY_MS = 100
+AI_QUIESCENCE_MAX_PLY = 8
+AI_QUIESCENCE_MAX_CANDIDATES = 3
+AI_MOVE_DELAY_MS = 10
 ```
 
 建议：
@@ -375,4 +400,4 @@ AI_MOVE_DELAY_MS = 100
 - 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
 - 想要更强棋力：优先改搜索策略/威胁处理，其次再提高深度
 - 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
-- `AI_CANDIDATE_RANGE` 和 `AI_VCF_MAX_DEPTH` 建议结合题库与对弈 benchmark 做 A/B 验证
+- `AI_CANDIDATE_RANGE`、`AI_VCF_MAX_DEPTH`、quiescence 参数建议结合题库与对弈 benchmark 做 A/B 验证

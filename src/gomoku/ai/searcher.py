@@ -17,7 +17,9 @@ from gomoku.board import Board
 from gomoku.config import (
     AI_EVAL_CACHE_MAX_SIZE,
     AI_MAX_CANDIDATES,
+    AI_QUIESCENCE_MAX_CANDIDATES,
     AI_QUIESCENCE_MAX_PLY,
+    AI_ROOT_RERANK_TOP_K,
     AI_TT_MAX_SIZE,
     AI_VCF_ENABLED,
     AI_VCF_MAX_CANDIDATES,
@@ -603,18 +605,28 @@ class AISearcher:
             return []
 
         killer_moves = self._killers.get(0, [])
+
+        def _cap_quiescence_moves(candidates: list[tuple[int, int]]) -> list[tuple[int, int]]:
+            if AI_QUIESCENCE_MAX_CANDIDATES <= 0:
+                return []
+            if len(candidates) <= AI_QUIESCENCE_MAX_CANDIDATES:
+                return candidates
+            return candidates[:AI_QUIESCENCE_MAX_CANDIDATES]
+
         current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
         immediate_wins = [move for move, (is_win, _) in current_move_analysis.items() if is_win]
         if immediate_wins:
             immediate_wins.sort()
-            return self._prioritize_special_moves(immediate_wins, tt_move, killer_moves)
+            prioritized = self._prioritize_special_moves(immediate_wins, tt_move, killer_moves)
+            return _cap_quiescence_moves(prioritized)
 
         opponent = self._opponent_of(current_player)
         opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
             blocking_moves.sort()
-            return self._prioritize_special_moves(blocking_moves, tt_move, killer_moves)
+            prioritized = self._prioritize_special_moves(blocking_moves, tt_move, killer_moves)
+            return _cap_quiescence_moves(prioritized)
 
         defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
@@ -626,7 +638,8 @@ class AISearcher:
             threat_moves = defense_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+                prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+                return _cap_quiescence_moves(prioritized)
 
         attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
@@ -638,7 +651,8 @@ class AISearcher:
             threat_moves = attack_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+                prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+                return _cap_quiescence_moves(prioritized)
 
         return []
 
@@ -729,6 +743,7 @@ class AISearcher:
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
         depth: int = 0,
+        rerank_top_k: int = _ORDERING_RERANK_TOP_K,
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
         opponent_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
@@ -796,7 +811,7 @@ class AISearcher:
 
         cutoff = self._dynamic_cutoff(scored_moves, AI_MAX_CANDIDATES)
         selected_moves = scored_moves[:cutoff]
-        rerank_limit = min(len(selected_moves), _ORDERING_RERANK_TOP_K)
+        rerank_limit = min(len(selected_moves), rerank_top_k)
         reranked = self._rerank_top_moves(
             board, selected_moves, rerank_limit, current_player, stats
         )
@@ -985,6 +1000,11 @@ class AISearcher:
             tt_move,
             stats,
             depth=depth,
+            rerank_top_k=(
+                AI_ROOT_RERANK_TOP_K
+                if maximizing and depth == root_depth
+                else _ORDERING_RERANK_TOP_K
+            ),
             current_move_analysis=current_move_analysis,
             opponent_move_analysis=opponent_move_analysis,
         )
