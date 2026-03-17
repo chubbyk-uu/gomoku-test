@@ -543,30 +543,56 @@ def test_search_stats_reset_between_searches():
     assert second_stats.tt_hits > 0
 
 
-def test_eval_cache_clears_when_limit_reached(monkeypatch):
-    """评估缓存达到上限后应清空再写入，避免无限增长。"""
+def test_eval_cache_evicts_oldest_when_limit_reached(monkeypatch):
+    """评估缓存达到上限后应淘汰旧条目，而不是整表清空。"""
     monkeypatch.setattr(searcher_module, "AI_EVAL_CACHE_MAX_SIZE", 1)
 
+    searcher = _make_searcher(depth=1)
+    searcher._eval_cache[11] = 111
+
     board = Board()
     board.place(7, 7, Player.BLACK)
-    searcher = _make_searcher(depth=1)
-
     searcher.find_best_move(board)
 
-    assert 0 < len(searcher._eval_cache) <= 1
+    assert len(searcher._eval_cache) == 1
+    assert 11 not in searcher._eval_cache
 
 
-def test_tt_clears_when_limit_reached(monkeypatch):
-    """置换表达到上限后应清空再写入，避免无限增长。"""
+def test_tt_evicts_oldest_when_limit_reached(monkeypatch):
+    """置换表达到上限后应淘汰旧条目，而不是整表清空。"""
     monkeypatch.setattr(searcher_module, "AI_TT_MAX_SIZE", 1)
 
+    searcher = _make_searcher(depth=2)
+    searcher._tt[11] = (1, 1.0, "E", None)
+
     board = Board()
     board.place(7, 7, Player.BLACK)
-    searcher = _make_searcher(depth=2)
-
     searcher.find_best_move(board)
 
-    assert 0 < len(searcher._tt) <= 1
+    assert len(searcher._tt) == 1
+    assert 11 not in searcher._tt
+
+
+def test_classify_moves_cache_key_respects_move_subset(monkeypatch):
+    """同一局面下不同候选子集不应错误复用 threat cache。"""
+    searcher = _make_searcher(depth=1)
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    board.place(7, 8, Player.WHITE)
+
+    seen_calls: list[list[tuple[int, int]]] = []
+
+    def fake_classify(_board, moves, _player):
+        seen_calls.append(list(moves))
+        return [("marker", move) for move in moves]
+
+    monkeypatch.setattr(searcher_module, "classify_attack_moves", fake_classify)
+
+    first = searcher._classify_moves_cached(board, [(6, 6), (6, 7)], Player.BLACK, mode="attack")
+    second = searcher._classify_moves_cached(board, [(6, 6)], Player.BLACK, mode="attack")
+
+    assert first != second
+    assert seen_calls == [[(6, 6), (6, 7)], [(6, 6)]]
 
 
 def test_iterative_deepening_reaches_max_depth_without_time_limit():
