@@ -17,8 +17,10 @@ from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_S
 
 try:
     from gomoku.ai._threat_kernels import analyze_move as _analyze_move_native
+    from gomoku.ai._threat_kernels import analyze_moves as _analyze_moves_native
 except ImportError:  # pragma: no cover - exercised when extension is not built
     _analyze_move_native = None
+    _analyze_moves_native = None
 
 # 置换表条目：(depth, score, flag, best_move)
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
@@ -276,11 +278,8 @@ class AISearcher:
         current_player: Player,
     ) -> list[tuple[int, int]]:
         """返回候选点中所有一步直接成五的着法。"""
-        return [
-            (row, col)
-            for row, col in moves
-            if self._is_immediate_winning_move(board, row, col, current_player)
-        ]
+        analyses = self._analyze_moves_for_player(board, moves, current_player)
+        return [move for move, (is_win, _) in analyses.items() if is_win]
 
     def _analyze_moves_for_player(
         self,
@@ -289,6 +288,9 @@ class AISearcher:
         player: Player,
     ) -> dict[tuple[int, int], _MoveAnalysis]:
         """批量分析当前层候选点，避免同一点重复扫描。"""
+        if _analyze_moves_native is not None:
+            analyses = _analyze_moves_native(board.grid, moves, int(player))
+            return {move: (bool(is_win), int(score)) for move, (is_win, score) in zip(moves, analyses, strict=False)}
         return {
             (row, col): self._analyze_move_for_player(board, row, col, player)
             for row, col in moves

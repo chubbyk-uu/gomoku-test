@@ -40,9 +40,7 @@ cdef inline int _line_tactical_score(int length, int open_ends):
     return 0
 
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
-cpdef tuple quick_pattern_summary(
+cdef inline tuple _quick_pattern_summary_impl(
     cnp.ndarray[grid_t, ndim=2] grid,
     int row,
     int col,
@@ -120,7 +118,37 @@ cpdef tuple quick_pattern_summary(
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cpdef tuple analyze_move(
+cpdef tuple quick_pattern_summary(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int row,
+    int col,
+    int player,
+):
+    return _quick_pattern_summary_impl(grid, row, col, player)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef list quick_pattern_summaries(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    object moves,
+    int player,
+):
+    cdef list results = []
+    cdef int row
+    cdef int col
+    cdef object move
+
+    for move in moves:
+        row = cython.cast(int, move[0])
+        col = cython.cast(int, move[1])
+        results.append(_quick_pattern_summary_impl(grid, row, col, player))
+    return results
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef inline tuple _analyze_move_impl(
     cnp.ndarray[grid_t, ndim=2] grid,
     int row,
     int col,
@@ -218,6 +246,36 @@ cpdef tuple analyze_move(
 
     center_bias = 2 * board_size - abs(row - center) - abs(col - center)
     return False, total_score + center_bias
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef tuple analyze_move(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int row,
+    int col,
+    int player,
+):
+    return _analyze_move_impl(grid, row, col, player)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef list analyze_moves(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    object moves,
+    int player,
+):
+    cdef list results = []
+    cdef int row
+    cdef int col
+    cdef object move
+
+    for move in moves:
+        row = cython.cast(int, move[0])
+        col = cython.cast(int, move[1])
+        results.append(_analyze_move_impl(grid, row, col, player))
+    return results
 
 
 cdef inline int _match_shape_code(int line[9]):

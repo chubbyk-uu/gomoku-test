@@ -11,8 +11,10 @@ _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 
 try:
     from gomoku.ai._threat_kernels import quick_pattern_summary as _quick_pattern_summary_native
+    from gomoku.ai._threat_kernels import quick_pattern_summaries as _quick_pattern_summaries_native
 except ImportError:  # pragma: no cover - exercised when extension is not built
     _quick_pattern_summary_native = None
+    _quick_pattern_summaries_native = None
 
 
 class ThreatType(IntEnum):
@@ -135,6 +137,20 @@ def _classify_move_for_player(board: Board, row: int, col: int, player: Player) 
     if board.grid[row, col] != Player.NONE:
         return ThreatType.OTHER
     is_win, is_open_four, has_potential = _quick_pattern_summary(board, row, col, player)
+    return _classify_move_for_player_from_summary(
+        board, row, col, player, is_win, is_open_four, has_potential
+    )
+
+
+def _classify_move_for_player_from_summary(
+    board: Board,
+    row: int,
+    col: int,
+    player: Player,
+    is_win: bool,
+    is_open_four: bool,
+    has_potential: bool,
+) -> ThreatType:
     if is_win:
         return ThreatType.WIN
     if is_open_four:
@@ -188,8 +204,15 @@ def classify_attack_moves(
 ) -> list[ThreatInfo]:
     """Classify only attacking threats for the given player."""
     infos: list[ThreatInfo] = []
-    for row, col in moves:
-        attack_type = _classify_move_for_player(board, row, col, player)
+    if _quick_pattern_summaries_native is not None:
+        summaries = _quick_pattern_summaries_native(board.grid, moves, int(player))
+    else:
+        summaries = [_quick_pattern_summary(board, row, col, player) for row, col in moves]
+
+    for (row, col), (is_win, is_open_four, has_potential) in zip(moves, summaries, strict=False):
+        attack_type = _classify_move_for_player_from_summary(
+            board, row, col, player, is_win, is_open_four, has_potential
+        )
         infos.append(
             ThreatInfo(
                 move=(row, col),
@@ -211,8 +234,15 @@ def classify_defense_moves(
     """Classify only defensive threats against the given player."""
     opponent = Player.WHITE if player == Player.BLACK else Player.BLACK
     infos: list[ThreatInfo] = []
-    for row, col in moves:
-        defense_type = _classify_move_for_player(board, row, col, opponent)
+    if _quick_pattern_summaries_native is not None:
+        summaries = _quick_pattern_summaries_native(board.grid, moves, int(opponent))
+    else:
+        summaries = [_quick_pattern_summary(board, row, col, opponent) for row, col in moves]
+
+    for (row, col), (is_win, is_open_four, has_potential) in zip(moves, summaries, strict=False):
+        defense_type = _classify_move_for_player_from_summary(
+            board, row, col, opponent, is_win, is_open_four, has_potential
+        )
         threat_type = ThreatType.BLOCK_WIN if defense_type == ThreatType.WIN else defense_type
         infos.append(
             ThreatInfo(
