@@ -19,8 +19,8 @@ class GameState(IntEnum):
 
 # ============ Board Parameters ============
 BOARD_SIZE: int = 15  # 棋盘行列数
-GRID_SIZE: int = 40  # 格子间距 (pixels)
-MARGIN: int = 20  # 棋盘边距 (pixels)
+GRID_SIZE: int = 44  # 格子间距 (pixels)
+MARGIN: int = 36  # 棋盘边距 (pixels)，为坐标标注预留空间
 WINDOW_SIZE: int = MARGIN * 2 + GRID_SIZE * (BOARD_SIZE - 1)  # 窗口边长
 FPS: int = 30  # 帧率
 
@@ -32,7 +32,7 @@ LINE_COLOR: tuple[int, int, int] = (0, 0, 0)  # 棋盘线条颜色
 RED: tuple[int, int, int] = (255, 0, 0)  # 提示文字颜色
 
 # ============ AI Configuration ============
-AI_SEARCH_DEPTH: int = 5  # Minimax 最大搜索深度上限
+AI_SEARCH_DEPTH: int = 6  # Minimax 最大搜索深度上限
 AI_SEARCH_TIME_LIMIT_S: float | None = None  # 可选限时；None 表示仅按最大深度搜索
 AI_MAX_CANDIDATES: int = 15  # 每层最多搜索候选点数（move ordering 后截断，减少搜索空间）
 AI_CANDIDATE_RANGE: int = 2  # 候选点邻域半径；越大越宽，越小越快但更容易漏点

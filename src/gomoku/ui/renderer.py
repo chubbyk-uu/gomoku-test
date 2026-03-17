@@ -22,12 +22,16 @@ from gomoku.config import (
 _FONT_LARGE = 48
 _FONT_MEDIUM = 36
 _FONT_SMALL = 28
+_FONT_COORD = 22
 
 # 棋子半径（留 2px 间距）
 _PIECE_RADIUS = GRID_SIZE // 2 - 2
 
 # 最后一手高亮：红色实心小方块边长
 _HIGHLIGHT_SIZE = 6
+
+# 天元标记半径
+_STAR_POINT_RADIUS = 5
 
 
 class Renderer:
@@ -56,6 +60,8 @@ class Renderer:
         """
         self.screen.fill(BG_COLOR)
         self._draw_grid()
+        self._draw_coordinates()
+        self._draw_star_point()
         self._draw_pieces(board)
         if board.last_move is not None:
             self.draw_last_move_highlight(*board.last_move)
@@ -164,6 +170,32 @@ class Renderer:
                 (MARGIN + i * GRID_SIZE, MARGIN + (BOARD_SIZE - 1) * GRID_SIZE),
                 1,
             )
+
+    def _draw_coordinates(self) -> None:
+        """在棋盘上方和左侧绘制 0-14 坐标。"""
+        font = pygame.font.SysFont(None, _FONT_COORD)
+        label_color = (70, 50, 30)
+        top_y = MARGIN // 2
+        left_x = MARGIN // 2
+
+        for idx in range(BOARD_SIZE):
+            label = font.render(str(idx), True, label_color)
+            cx, cy = self._board_to_pixel(idx, idx)
+            self.screen.blit(label, (cx - label.get_width() // 2, top_y - label.get_height() // 2))
+            self.screen.blit(
+                label,
+                (left_x - label.get_width() // 2, cy - label.get_height() // 2),
+            )
+
+    def _draw_star_point(self) -> None:
+        """在天元位置绘制一个小黑点。"""
+        center = BOARD_SIZE // 2
+        pygame.draw.circle(
+            self.screen,
+            BLACK_COLOR,
+            self._board_to_pixel(center, center),
+            _STAR_POINT_RADIUS,
+        )
 
     def _draw_pieces(self, board: Board) -> None:
         """绘制棋盘上的所有棋子。
