@@ -643,8 +643,27 @@ class AISearcher:
         for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
             attack_grouped[info.attack_type].append(info.move)
 
-        # 对手只有双活三时，允许我方用更强的先手（至少冲四）继续抢攻。
-        if defense_grouped[ThreatType.DOUBLE_OPEN_THREE]:
+        attack_half_four_or_better = any(
+            attack_grouped[threat_type]
+            for threat_type in (
+                ThreatType.WIN,
+                ThreatType.OPEN_FOUR,
+                ThreatType.DOUBLE_HALF_FOUR,
+                ThreatType.FOUR_THREE,
+                ThreatType.HALF_FOUR,
+            )
+        )
+
+        if defense_grouped[ThreatType.HALF_FOUR] and not attack_half_four_or_better:
+            threat_moves = defense_grouped[ThreatType.HALF_FOUR]
+            threat_moves.sort()
+            return self._prioritize_special_moves(threat_moves, tt_move, ply)
+
+        # 对手最高威胁只到活三系时，允许我方用更强的先手（至少冲四）继续抢攻。
+        if (
+            defense_grouped[ThreatType.DOUBLE_OPEN_THREE]
+            or defense_grouped[ThreatType.OPEN_THREE]
+        ):
             for threat_type in (
                 ThreatType.WIN,
                 ThreatType.OPEN_FOUR,
@@ -656,7 +675,11 @@ class AISearcher:
                 if threat_moves:
                     threat_moves.sort()
                     return self._prioritize_special_moves(threat_moves, tt_move, ply)
-            threat_moves = defense_grouped[ThreatType.DOUBLE_OPEN_THREE]
+            if defense_grouped[ThreatType.DOUBLE_OPEN_THREE]:
+                threat_moves = defense_grouped[ThreatType.DOUBLE_OPEN_THREE]
+                threat_moves.sort()
+                return self._prioritize_special_moves(threat_moves, tt_move, ply)
+            threat_moves = defense_grouped[ThreatType.OPEN_THREE]
             threat_moves.sort()
             return self._prioritize_special_moves(threat_moves, tt_move, ply)
 
@@ -920,9 +943,12 @@ class AISearcher:
                     )
                 finally:
                     board.undo()
-                if score > best_score:
+                candidate_move = (row, col)
+                if score > best_score or (
+                    score == best_score and best_move is not None and candidate_move < best_move
+                ):
                     best_score = score
-                    best_move = (row, col)
+                    best_move = candidate_move
                 alpha = max(alpha, best_score)
                 if beta <= alpha:
                     # beta 截断：真实值 >= best_score，存为下界
@@ -945,9 +971,12 @@ class AISearcher:
                     )
                 finally:
                     board.undo()
-                if score < best_score:
+                candidate_move = (row, col)
+                if score < best_score or (
+                    score == best_score and best_move is not None and candidate_move < best_move
+                ):
                     best_score = score
-                    best_move = (row, col)
+                    best_move = candidate_move
                 beta = min(beta, best_score)
                 if beta <= alpha:
                     # alpha 截断：真实值 <= best_score，存为上界

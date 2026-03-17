@@ -301,6 +301,50 @@ def test_minimax_blocks_opponent_win_before_forcing_attack():
     assert searcher.find_best_move(board) == (6, 5)
 
 
+def test_search_avoids_open_three_only_block_when_half_four_defense_exists():
+    """对手已有冲四级应手时，不应被活三优先规则误导去走弱防点。"""
+    board = Board()
+    black = [
+        (4, 10),
+        (5, 10),
+        (6, 12),
+        (7, 7),
+        (7, 10),
+        (8, 5),
+        (8, 8),
+        (8, 9),
+        (9, 6),
+        (9, 7),
+        (9, 8),
+        (10, 8),
+        (11, 8),
+    ]
+    white = [
+        (4, 8),
+        (4, 9),
+        (6, 8),
+        (6, 10),
+        (6, 11),
+        (7, 8),
+        (7, 9),
+        (8, 6),
+        (8, 7),
+        (9, 4),
+        (9, 9),
+        (10, 7),
+        (12, 8),
+    ]
+    for row, col in black:
+        board.place(row, col, Player.BLACK)
+    for row, col in white:
+        board.place(row, col, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=4)
+    move = searcher.find_best_move(board)
+
+    assert move != (8, 10)
+
+
 def test_select_search_moves_prioritizes_open_four(monkeypatch):
     """阶段 2 接入后，OPEN_FOUR 应直接作为最高优先级候选返回。"""
     board = Board()
@@ -454,6 +498,59 @@ def test_select_search_moves_prefers_half_four_over_blocking_double_open_three(m
                 ThreatType.DOUBLE_OPEN_THREE,
                 0,
                 55_000,
+            ),
+            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
+        ]
+
+    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
+
+    moves = searcher._select_search_moves(
+        board,
+        candidate_moves,
+        Player.BLACK,
+        tt_move=None,
+        stats=searcher.last_search_stats,
+    )
+
+    assert moves == [(7, 7)]
+
+
+def test_select_search_moves_prefers_half_four_over_blocking_open_three(monkeypatch):
+    """对手最高威胁仅为活三时，也应先看我方冲四级先手。"""
+    board = Board()
+    searcher = _make_searcher(ai_player=Player.BLACK)
+    candidate_moves = [(7, 7), (7, 8), (8, 8)]
+
+    def fake_classify(_board, _moves, _player, mode="both"):
+        if mode == "attack":
+            return [
+                ThreatInfo(
+                    (7, 7),
+                    ThreatType.HALF_FOUR,
+                    ThreatType.HALF_FOUR,
+                    ThreatType.OTHER,
+                    30_000,
+                    0,
+                ),
+                ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
+            ]
+        return [
+            ThreatInfo(
+                (7, 7),
+                ThreatType.OPEN_THREE,
+                ThreatType.OTHER,
+                ThreatType.OPEN_THREE,
+                0,
+                12_000,
+            ),
+            ThreatInfo(
+                (7, 8),
+                ThreatType.OPEN_THREE,
+                ThreatType.OTHER,
+                ThreatType.OPEN_THREE,
+                0,
+                12_000,
             ),
             ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
         ]
