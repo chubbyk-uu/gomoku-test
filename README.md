@@ -164,7 +164,9 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 当前已下沉的热点包括：
 
 - 局部 quick pattern summary
+- 批量 quick pattern summaries
 - 单点 move analysis
+- 批量 move analysis
 - 单线 shape counting
 
 ## 项目结构
@@ -172,23 +174,30 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 ```text
 gomoku-test/
 ├── src/gomoku/
+│   ├── __init__.py
 │   ├── __main__.py
 │   ├── config.py
 │   ├── board.py
 │   ├── game.py
 │   ├── ai/
+│   │   ├── __init__.py
+│   │   ├── _threat_kernels.c
 │   │   ├── _threat_kernels.pyx
 │   │   ├── evaluator.py
 │   │   ├── puzzles.py
 │   │   ├── searcher.py
 │   │   └── threats.py
 │   └── ui/
+│       ├── __init__.py
 │       └── renderer.py
 ├── tests/
+│   ├── __init__.py
 │   ├── test_benchmark.py
 │   ├── test_board.py
 │   ├── test_evaluator.py
+│   ├── test_game.py
 │   ├── test_puzzles.py
+│   ├── test_renderer.py
 │   ├── test_searcher.py
 │   └── test_threats.py
 ├── tools/
@@ -283,6 +292,8 @@ ruff check .
 单测当前主要覆盖：
 
 - 棋盘落子、悔棋、胜负判断、候选点维护
+- 游戏状态切换与控制器辅助逻辑
+- 渲染器坐标映射
 - 评估器棋型识别与增量计数
 - 搜索结果稳定性
 - TT / 缓存复用
