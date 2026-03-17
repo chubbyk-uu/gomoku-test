@@ -19,10 +19,11 @@ from gomoku.config import (
 )
 
 # 字体大小
-_FONT_LARGE = 48
-_FONT_MEDIUM = 36
-_FONT_SMALL = 28
-_FONT_COORD = 22
+_FONT_LARGE = 58
+_FONT_MEDIUM = 43
+_FONT_SMALL = 34
+_FONT_COORD = 26
+_FONT_MOVE_NUMBER = 33
 
 # 棋子半径（留 2px 间距）
 _PIECE_RADIUS = GRID_SIZE // 2 - 2
@@ -31,7 +32,7 @@ _PIECE_RADIUS = GRID_SIZE // 2 - 2
 _HIGHLIGHT_SIZE = 6
 
 # 天元标记半径
-_STAR_POINT_RADIUS = 5
+_STAR_POINT_RADIUS = 6
 
 
 class Renderer:
@@ -53,7 +54,7 @@ class Renderer:
     # ------------------------------------------------------------------
 
     def draw_board(self, board: Board) -> None:
-        """绘制棋盘背景、网格线、所有棋子，以及最后一手高亮。
+        """绘制棋盘背景、网格线、所有棋子、手数，以及最后一手高亮。
 
         Args:
             board: 当前棋盘状态。
@@ -63,20 +64,18 @@ class Renderer:
         self._draw_coordinates()
         self._draw_star_point()
         self._draw_pieces(board)
+        self._draw_move_numbers(board)
         if board.last_move is not None:
             self.draw_last_move_highlight(*board.last_move)
 
     def draw_last_move_highlight(self, row: int, col: int) -> None:
-        """在 (row, col) 处绘制红色小方块标记最后一手落子位置。
+        """最后一手通过红色手数字高亮，此处保留为空操作。
 
         Args:
             row: 行坐标。
             col: 列坐标。
         """
-        cx, cy = self._board_to_pixel(row, col)
-        half = _HIGHLIGHT_SIZE // 2
-        rect = pygame.Rect(cx - half, cy - half, _HIGHLIGHT_SIZE, _HIGHLIGHT_SIZE)
-        pygame.draw.rect(self.screen, RED, rect)
+        _ = (row, col)
 
     def draw_menu(self) -> None:
         """绘制开局颜色选择界面。"""
@@ -214,6 +213,27 @@ class Renderer:
                 else:
                     pygame.draw.circle(self.screen, WHITE_COLOR, center, _PIECE_RADIUS)
                     pygame.draw.circle(self.screen, BLACK_COLOR, center, _PIECE_RADIUS, 1)
+
+    def _draw_move_numbers(self, board: Board) -> None:
+        """在每颗棋子上绘制从 1 开始的手数标记。"""
+        for move_index, (row, col, player) in enumerate(board.move_history, start=1):
+            digits = len(str(move_index))
+            font_size = _FONT_MOVE_NUMBER
+            if digits >= 3:
+                font_size = 23
+            elif digits == 2:
+                font_size = 28
+
+            font = pygame.font.SysFont(None, font_size, bold=False)
+            color = RED if board.last_move == (row, col) else (
+                WHITE_COLOR if player == Player.BLACK else BLACK_COLOR
+            )
+            label = font.render(str(move_index), True, color)
+            center_x, center_y = self._board_to_pixel(row, col)
+            self.screen.blit(
+                label,
+                (center_x - label.get_width() // 2, center_y - label.get_height() // 2),
+            )
 
     def _board_to_pixel(self, row: int, col: int) -> tuple[int, int]:
         """将棋盘坐标转换为像素中心坐标。
