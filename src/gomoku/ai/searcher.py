@@ -17,6 +17,7 @@ from gomoku.board import Board
 from gomoku.config import (
     AI_EVAL_CACHE_MAX_SIZE,
     AI_MAX_CANDIDATES,
+    AI_QUIESCENCE_MAX_PLY,
     AI_TT_MAX_SIZE,
     AI_VCF_ENABLED,
     AI_VCF_MAX_CANDIDATES,
@@ -39,6 +40,11 @@ _ORDERING_RERANK_TOP_K = 8
 _MoveAnalysis = tuple[bool, int]
 _FORCING_SEARCH_DEPTH = 4
 _FORCING_SEARCH_ENABLED = False
+_QUIESCENCE_THREATS: tuple[ThreatType, ...] = (
+    ThreatType.WIN,
+    ThreatType.OPEN_FOUR,
+    ThreatType.DOUBLE_HALF_FOUR,
+)
 
 
 @dataclass
@@ -585,6 +591,136 @@ class AISearcher:
             cutoff += 1
         return cutoff
 
+    def _select_quiescence_moves(
+        self,
+        board: Board,
+        current_player: Player,
+        tt_move: Optional[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """Return only high-priority tactical moves for quiescence search."""
+        moves = board.get_candidate_moves()
+        if not moves:
+            return []
+
+        killer_moves = self._killers.get(0, [])
+        current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
+        immediate_wins = [move for move, (is_win, _) in current_move_analysis.items() if is_win]
+        if immediate_wins:
+            immediate_wins.sort()
+            return self._prioritize_special_moves(immediate_wins, tt_move, killer_moves)
+
+        opponent = self._opponent_of(current_player)
+        opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
+        blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
+        if blocking_moves:
+            blocking_moves.sort()
+            return self._prioritize_special_moves(blocking_moves, tt_move, killer_moves)
+
+        defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
+            threat_type: [] for threat_type in ThreatType
+        }
+        for info in self._classify_moves_cached(board, moves, current_player, mode="defense"):
+            defense_grouped[info.defense_type].append(info.move)
+
+        for threat_type in _QUIESCENCE_THREATS[1:]:
+            threat_moves = defense_grouped[threat_type]
+            if threat_moves:
+                threat_moves.sort()
+                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+
+        attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
+            threat_type: [] for threat_type in ThreatType
+        }
+        for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
+            attack_grouped[info.attack_type].append(info.move)
+
+        for threat_type in _QUIESCENCE_THREATS[1:]:
+            threat_moves = attack_grouped[threat_type]
+            if threat_moves:
+                threat_moves.sort()
+                return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
+
+        return []
+
+    def _quiescence(
+        self,
+        board: Board,
+        alpha: float,
+        beta: float,
+        maximizing: bool,
+        stats: SearchStats,
+        remaining_ply: int,
+    ) -> tuple[float, Optional[tuple[int, int]]]:
+        """Extend leaf nodes along forcing tactical moves until the position is quiet."""
+        self._check_timeout()
+        stats.leaf_evals += 1
+        stand_pat = self._evaluate(board)
+        if remaining_ply <= 0:
+            return stand_pat, None
+
+        current_player = self.ai_player if maximizing else self._opponent
+        tt_move = None
+        entry = self._tt.get(board.hash)
+        if entry is not None:
+            tt_move = entry[3]
+        moves = self._select_quiescence_moves(board, current_player, tt_move)
+        if not moves:
+            return stand_pat, None
+
+        best_move: Optional[tuple[int, int]] = None
+        if maximizing:
+            best_score = stand_pat
+            alpha = max(alpha, best_score)
+            if beta <= alpha:
+                return best_score, None
+            for row, col in moves:
+                self._check_timeout()
+                board.place(row, col, current_player)
+                try:
+                    score, _ = self._quiescence(
+                        board,
+                        alpha,
+                        beta,
+                        False,
+                        stats,
+                        remaining_ply - 1,
+                    )
+                finally:
+                    board.undo()
+                if score > best_score:
+                    best_score = score
+                    best_move = (row, col)
+                alpha = max(alpha, best_score)
+                if beta <= alpha:
+                    break
+            return best_score, best_move
+
+        best_score = stand_pat
+        beta = min(beta, best_score)
+        if beta <= alpha:
+            return best_score, None
+        for row, col in moves:
+            self._check_timeout()
+            board.place(row, col, current_player)
+            try:
+                score, _ = self._quiescence(
+                    board,
+                    alpha,
+                    beta,
+                    True,
+                    stats,
+                    remaining_ply - 1,
+                )
+            finally:
+                board.undo()
+            if score < best_score:
+                best_score = score
+                best_move = (row, col)
+            beta = min(beta, best_score)
+            if beta <= alpha:
+                break
+        return best_score, best_move
+
     def _select_search_moves(
         self,
         board: Board,
@@ -796,10 +932,16 @@ class AISearcher:
 
         # --- 叶节点 ---
         if depth == 0:
-            stats.leaf_evals += 1
-            score = self._evaluate(board)
-            self._store_tt(self._tt, h, (0, score, "E", None))
-            return score, None
+            score, move = self._quiescence(
+                board,
+                alpha,
+                beta,
+                maximizing,
+                stats,
+                AI_QUIESCENCE_MAX_PLY,
+            )
+            self._store_tt(self._tt, h, (0, score, "E", move))
+            return score, move
 
         # --- 无候选点 ---
         moves = board.get_candidate_moves()

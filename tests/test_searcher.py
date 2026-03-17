@@ -573,12 +573,73 @@ def test_forcing_search_updates_stats_when_used():
     board.place(8, 5, Player.WHITE)
 
     searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    searcher_module._FORCING_SEARCH_ENABLED = True
     searcher._vcf.find_winning_move = lambda *_args, **_kwargs: None
     searcher._vcf.find_blocking_move = lambda *_args, **_kwargs: None
-    move = searcher.find_best_move(board)
+    try:
+        move = searcher.find_best_move(board)
+    finally:
+        searcher_module._FORCING_SEARCH_ENABLED = False
 
     assert move in {(7, 3), (7, 7)}
     assert searcher.last_search_stats.forcing_wins >= 1
+
+
+def test_select_quiescence_moves_prefers_immediate_blocks():
+    """静稳搜索应优先扩展一步防输点，而不是普通候选。"""
+    board = Board()
+    for col in range(4):
+        board.place(0, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=2)
+
+    assert searcher._select_quiescence_moves(board, Player.WHITE, None) == [(0, 4)]
+
+
+def test_quiescence_returns_stand_pat_on_quiet_position():
+    """安静局面不应继续扩展战术分支。"""
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    board.place(8, 8, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    expected = searcher._evaluate(board)
+    stats = searcher_module.SearchStats()
+
+    score, move = searcher._quiescence(
+        board,
+        alpha=float("-inf"),
+        beta=float("inf"),
+        maximizing=True,
+        stats=stats,
+        remaining_ply=4,
+    )
+
+    assert score == expected
+    assert move is None
+    assert stats.leaf_evals == 1
+
+
+def test_quiescence_extends_forcing_tactical_move():
+    """非安静叶子局面应继续扩展高优先级战术手。"""
+    board = Board()
+    for col in range(4, 8):
+        board.place(7, col, Player.BLACK)
+
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
+    stats = searcher_module.SearchStats()
+
+    score, move = searcher._quiescence(
+        board,
+        alpha=float("-inf"),
+        beta=float("inf"),
+        maximizing=True,
+        stats=stats,
+        remaining_ply=4,
+    )
+
+    assert move in {(7, 3), (7, 8)}
+    assert score >= 100_000
 
 
 def test_search_stats_populated_after_search():
