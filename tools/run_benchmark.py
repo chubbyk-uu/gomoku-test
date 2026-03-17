@@ -54,6 +54,11 @@ def main() -> None:
         help="Suppress per-game output, print report only",
     )
     parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Print running progress after each completed game",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -99,6 +104,7 @@ def main() -> None:
         player_b,
         num_games=args.games,
         verbose=not args.quiet,
+        progress=args.progress,
         print_report=True,
         seed=args.seed,
         save_json=args.save_json,

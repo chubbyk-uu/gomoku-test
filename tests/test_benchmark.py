@@ -97,6 +97,34 @@ def test_run_benchmark_can_cap_game_length(tmp_path):
     assert payload["game_lengths"] == [1]
 
 
+def test_run_benchmark_can_print_progress(capsys):
+    from benchmark import run_benchmark
+
+    from gomoku.ai.searcher import AISearcher
+    from gomoku.config import Player
+
+    player_a = AISearcher(depth=1, ai_player=Player.BLACK, time_limit_s=None)
+    player_b = AISearcher(depth=1, ai_player=Player.WHITE, time_limit_s=None)
+
+    result = run_benchmark(
+        player_a,
+        player_b,
+        num_games=1,
+        verbose=False,
+        progress=True,
+        print_report=False,
+        seed=5,
+        max_moves=2,
+    )
+
+    out = capsys.readouterr().out
+    assert result.total_games() == 1
+    assert "[1/1]" in out
+    assert "score A/B/D=" in out
+    assert "last_avg_ms A=" in out
+    assert "total_avg_ms A=" in out
+
+
 def test_run_benchmark_cli_defaults_to_even_depths(monkeypatch):
     module = importlib.import_module("run_benchmark")
     captured: dict[str, object] = {}
@@ -120,6 +148,33 @@ def test_run_benchmark_cli_defaults_to_even_depths(monkeypatch):
 
     assert captured["depth_a"] == 4
     assert captured["depth_b"] == 4
+    assert captured["kwargs"]["progress"] is False
+
+
+def test_run_benchmark_cli_can_enable_progress(monkeypatch):
+    module = importlib.import_module("run_benchmark")
+    captured: dict[str, object] = {}
+
+    class DummySearcher:
+        def __init__(self, depth, ai_player, time_limit_s=None):
+            self.depth = depth
+            self.ai_player = ai_player
+            self.time_limit_s = time_limit_s
+
+    def fake_run_benchmark(player_a, player_b, **kwargs):
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(module, "AISearcher", DummySearcher)
+    monkeypatch.setattr(module, "run_benchmark", fake_run_benchmark)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmark.py", "--games", "1", "--quiet", "--progress"],
+    )
+
+    module.main()
+
+    assert captured["kwargs"]["progress"] is True
 
 
 def test_run_puzzle_benchmark_cli_defaults_to_even_depth(monkeypatch, capsys):

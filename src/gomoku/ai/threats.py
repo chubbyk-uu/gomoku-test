@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from gomoku.ai.evaluator import Shape, _count_shapes_after_move
-from gomoku.board import Board, count_one_side
-from gomoku.config import DIRECTIONS, Player
+from gomoku.board import Board
+from gomoku.config import Player
+
+_DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 
 try:
     from gomoku.ai._threat_kernels import quick_pattern_summary as _quick_pattern_summary_native
@@ -37,6 +39,27 @@ class ThreatInfo:
     defense_type: ThreatType
     attack_score: int
     defense_score: int
+
+
+def _count_one_side(
+    board: Board,
+    row: int,
+    col: int,
+    dr: int,
+    dc: int,
+    player: Player,
+) -> tuple[int, bool]:
+    grid = board.grid
+    r, c = row + dr, col + dc
+    length = 0
+    while 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == player:
+        length += 1
+        r += dr
+        c += dc
+    is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
+    return length, is_open
+
+
 def _quick_pattern_summary(
     board: Board,
     row: int,
@@ -53,9 +76,9 @@ def _quick_pattern_summary(
     has_immediate_threat = False
     has_potential = False
     promising_directions = 0
-    for dr, dc in DIRECTIONS:
-        left_len, left_open = count_one_side(board, row, col, -dr, -dc, player)
-        right_len, right_open = count_one_side(board, row, col, dr, dc, player)
+    for dr, dc in _DIRECTIONS:
+        left_len, left_open = _count_one_side(board, row, col, -dr, -dc, player)
+        right_len, right_open = _count_one_side(board, row, col, dr, dc, player)
         total_len = 1 + left_len + right_len
         open_ends = int(left_open) + int(right_open)
 
@@ -125,7 +148,7 @@ def _classify_move_for_player(board: Board, row: int, col: int, player: Player) 
 
 def classify_move(board: Board, row: int, col: int, player: Player) -> ThreatInfo:
     """Classify a candidate move using exact evaluator pattern counts."""
-    opponent = player.opponent
+    opponent = Player.WHITE if player == Player.BLACK else Player.BLACK
 
     attack_type = _classify_move_for_player(board, row, col, player)
     defense_type = _classify_move_for_player(board, row, col, opponent)
@@ -186,7 +209,7 @@ def classify_defense_moves(
     player: Player,
 ) -> list[ThreatInfo]:
     """Classify only defensive threats against the given player."""
-    opponent = player.opponent
+    opponent = Player.WHITE if player == Player.BLACK else Player.BLACK
     infos: list[ThreatInfo] = []
     for row, col in moves:
         defense_type = _classify_move_for_player(board, row, col, opponent)

@@ -1,7 +1,5 @@
 """Tests for AISearcher."""
 
-import math
-
 import gomoku.ai.searcher as searcher_module
 from gomoku.ai.searcher import AISearcher
 from gomoku.ai.threats import ThreatInfo, ThreatType
@@ -162,17 +160,6 @@ def test_prioritize_tt_move_only_reorders_existing_candidate():
     assert searcher._prioritize_tt_move(moves, (9, 9)) == moves
 
 
-def test_prioritize_special_moves_prefers_tt_then_killers():
-    """killer move 应排在普通候选前，但仍位于 TT move 之后。"""
-    searcher = _make_searcher(depth=3)
-    searcher._killers[0] = [(8, 8), (7, 7)]
-    moves = [(7, 7), (7, 8), (8, 8), (9, 9)]
-
-    ordered = searcher._prioritize_special_moves(moves, (7, 8), ply=0)
-
-    assert ordered == [(7, 8), (8, 8), (7, 7), (9, 9)]
-
-
 def test_find_immediate_winning_moves_returns_all_wins():
     """开放四应识别出两端的全部一步成五点。"""
     board = Board()
@@ -301,50 +288,6 @@ def test_minimax_blocks_opponent_win_before_forcing_attack():
     assert searcher.find_best_move(board) == (6, 5)
 
 
-def test_search_avoids_open_three_only_block_when_half_four_defense_exists():
-    """对手已有冲四级应手时，不应被活三优先规则误导去走弱防点。"""
-    board = Board()
-    black = [
-        (4, 10),
-        (5, 10),
-        (6, 12),
-        (7, 7),
-        (7, 10),
-        (8, 5),
-        (8, 8),
-        (8, 9),
-        (9, 6),
-        (9, 7),
-        (9, 8),
-        (10, 8),
-        (11, 8),
-    ]
-    white = [
-        (4, 8),
-        (4, 9),
-        (6, 8),
-        (6, 10),
-        (6, 11),
-        (7, 8),
-        (7, 9),
-        (8, 6),
-        (8, 7),
-        (9, 4),
-        (9, 9),
-        (10, 7),
-        (12, 8),
-    ]
-    for row, col in black:
-        board.place(row, col, Player.BLACK)
-    for row, col in white:
-        board.place(row, col, Player.WHITE)
-
-    searcher = _make_searcher(ai_player=Player.BLACK, depth=4)
-    move = searcher.find_best_move(board)
-
-    assert move != (8, 10)
-
-
 def test_select_search_moves_prioritizes_open_four(monkeypatch):
     """阶段 2 接入后，OPEN_FOUR 应直接作为最高优先级候选返回。"""
     board = Board()
@@ -462,112 +405,6 @@ def test_select_search_moves_prioritizes_double_open_three(monkeypatch):
     assert moves == [(7, 8)]
 
 
-def test_select_search_moves_prefers_half_four_over_blocking_double_open_three(monkeypatch):
-    """对手仅有双活三时，我方的冲四级先手应允许继续抢攻。"""
-    board = Board()
-    searcher = _make_searcher(ai_player=Player.BLACK)
-    candidate_moves = [(7, 7), (7, 8), (8, 8)]
-
-    def fake_classify(_board, _moves, _player, mode="both"):
-        if mode == "attack":
-            return [
-                ThreatInfo(
-                    (7, 7),
-                    ThreatType.HALF_FOUR,
-                    ThreatType.HALF_FOUR,
-                    ThreatType.OTHER,
-                    30_000,
-                    0,
-                ),
-                ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
-                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
-            ]
-        return [
-            ThreatInfo(
-                (7, 7),
-                ThreatType.DOUBLE_OPEN_THREE,
-                ThreatType.OTHER,
-                ThreatType.DOUBLE_OPEN_THREE,
-                0,
-                55_000,
-            ),
-            ThreatInfo(
-                (7, 8),
-                ThreatType.DOUBLE_OPEN_THREE,
-                ThreatType.OTHER,
-                ThreatType.DOUBLE_OPEN_THREE,
-                0,
-                55_000,
-            ),
-            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
-        ]
-
-    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
-
-    moves = searcher._select_search_moves(
-        board,
-        candidate_moves,
-        Player.BLACK,
-        tt_move=None,
-        stats=searcher.last_search_stats,
-    )
-
-    assert moves == [(7, 7)]
-
-
-def test_select_search_moves_prefers_half_four_over_blocking_open_three(monkeypatch):
-    """对手最高威胁仅为活三时，也应先看我方冲四级先手。"""
-    board = Board()
-    searcher = _make_searcher(ai_player=Player.BLACK)
-    candidate_moves = [(7, 7), (7, 8), (8, 8)]
-
-    def fake_classify(_board, _moves, _player, mode="both"):
-        if mode == "attack":
-            return [
-                ThreatInfo(
-                    (7, 7),
-                    ThreatType.HALF_FOUR,
-                    ThreatType.HALF_FOUR,
-                    ThreatType.OTHER,
-                    30_000,
-                    0,
-                ),
-                ThreatInfo((7, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
-                ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 100, 0),
-            ]
-        return [
-            ThreatInfo(
-                (7, 7),
-                ThreatType.OPEN_THREE,
-                ThreatType.OTHER,
-                ThreatType.OPEN_THREE,
-                0,
-                12_000,
-            ),
-            ThreatInfo(
-                (7, 8),
-                ThreatType.OPEN_THREE,
-                ThreatType.OTHER,
-                ThreatType.OPEN_THREE,
-                0,
-                12_000,
-            ),
-            ThreatInfo((8, 8), ThreatType.OTHER, ThreatType.OTHER, ThreatType.OTHER, 0, 10),
-        ]
-
-    monkeypatch.setattr(searcher, "_classify_moves_cached", fake_classify)
-
-    moves = searcher._select_search_moves(
-        board,
-        candidate_moves,
-        Player.BLACK,
-        tt_move=None,
-        stats=searcher.last_search_stats,
-    )
-
-    assert moves == [(7, 7)]
-
-
 def test_dynamic_cutoff_shrinks_for_critical_scores():
     """强威胁分数应触发更窄的动态截断。"""
     scored_moves = [
@@ -666,69 +503,11 @@ def test_forcing_search_updates_stats_when_used():
     board.place(6, 5, Player.WHITE)
     board.place(8, 5, Player.WHITE)
 
-    searcher = _make_searcher(ai_player=Player.BLACK, depth=3)
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
     move = searcher.find_best_move(board)
 
     assert move in {(7, 3), (7, 7)}
     assert searcher.last_search_stats.forcing_wins >= 1
-
-
-def test_forcing_search_skipped_on_shallow_depth(monkeypatch):
-    """浅层节点不应触发 forcing search 短路。"""
-    board = Board()
-    board.place(7, 4, Player.BLACK)
-    board.place(7, 5, Player.BLACK)
-    board.place(7, 6, Player.BLACK)
-    board.place(6, 5, Player.WHITE)
-    board.place(8, 5, Player.WHITE)
-
-    searcher = _make_searcher(ai_player=Player.BLACK, depth=2)
-    calls = {"forcing": 0}
-    original_find_forcing_move = searcher._find_forcing_move
-
-    def wrapped_find_forcing_move(*args, **kwargs):
-        calls["forcing"] += 1
-        return original_find_forcing_move(*args, **kwargs)
-
-    monkeypatch.setattr(searcher, "_find_forcing_move", wrapped_find_forcing_move)
-
-    move = searcher.find_best_move(board)
-
-    assert move in {(7, 3), (7, 7)}
-    assert calls["forcing"] == 0
-    assert searcher.last_search_stats.forcing_wins == 0
-
-
-def test_beta_cutoff_records_killer_move(monkeypatch):
-    """产生 beta 截断的着法应被记录为当前层 killer move。"""
-    board = Board()
-    searcher = _make_searcher(depth=2)
-    board.get_candidate_moves = lambda: [(7, 7), (7, 8)]  # type: ignore[method-assign]
-
-    monkeypatch.setattr(searcher, "_tactical_extension_moves", lambda _board, _player: [])
-    monkeypatch.setattr(
-        searcher,
-        "_analyze_moves_for_player",
-        lambda _board, moves, _player: {move: (False, 0) for move in moves},
-    )
-    monkeypatch.setattr(
-        searcher,
-        "_select_search_moves",
-        lambda _board, moves, _player, _tt_move, _stats, ply=0, **kwargs: moves,
-    )
-    monkeypatch.setattr(
-        searcher,
-        "_evaluate",
-        lambda current_board: 10 if current_board.last_move == (7, 7) else -10,
-    )
-
-    score, move = searcher._minimax(
-        board, 1, -math.inf, 0, True, searcher.last_search_stats
-    )
-
-    assert score == 10
-    assert move == (7, 7)
-    assert searcher._killers[0][0] == (7, 7)
 
 
 def test_search_stats_populated_after_search():
@@ -764,56 +543,30 @@ def test_search_stats_reset_between_searches():
     assert second_stats.tt_hits > 0
 
 
-def test_eval_cache_evicts_oldest_when_limit_reached(monkeypatch):
-    """评估缓存达到上限后应淘汰旧条目，而不是整表清空。"""
+def test_eval_cache_clears_when_limit_reached(monkeypatch):
+    """评估缓存达到上限后应清空再写入，避免无限增长。"""
     monkeypatch.setattr(searcher_module, "AI_EVAL_CACHE_MAX_SIZE", 1)
 
-    searcher = _make_searcher(depth=1)
-    searcher._eval_cache[11] = 111
-
     board = Board()
     board.place(7, 7, Player.BLACK)
+    searcher = _make_searcher(depth=1)
+
     searcher.find_best_move(board)
 
-    assert len(searcher._eval_cache) == 1
-    assert 11 not in searcher._eval_cache
+    assert 0 < len(searcher._eval_cache) <= 1
 
 
-def test_tt_evicts_oldest_when_limit_reached(monkeypatch):
-    """置换表达到上限后应淘汰旧条目，而不是整表清空。"""
+def test_tt_clears_when_limit_reached(monkeypatch):
+    """置换表达到上限后应清空再写入，避免无限增长。"""
     monkeypatch.setattr(searcher_module, "AI_TT_MAX_SIZE", 1)
 
-    searcher = _make_searcher(depth=2)
-    searcher._tt[11] = (1, 1.0, "E", None)
-
     board = Board()
     board.place(7, 7, Player.BLACK)
+    searcher = _make_searcher(depth=2)
+
     searcher.find_best_move(board)
 
-    assert len(searcher._tt) == 1
-    assert 11 not in searcher._tt
-
-
-def test_classify_moves_cache_key_respects_move_subset(monkeypatch):
-    """同一局面下不同候选子集不应错误复用 threat cache。"""
-    searcher = _make_searcher(depth=1)
-    board = Board()
-    board.place(7, 7, Player.BLACK)
-    board.place(7, 8, Player.WHITE)
-
-    seen_calls: list[list[tuple[int, int]]] = []
-
-    def fake_classify(_board, moves, _player):
-        seen_calls.append(list(moves))
-        return [("marker", move) for move in moves]
-
-    monkeypatch.setattr(searcher_module, "classify_attack_moves", fake_classify)
-
-    first = searcher._classify_moves_cached(board, [(6, 6), (6, 7)], Player.BLACK, mode="attack")
-    second = searcher._classify_moves_cached(board, [(6, 6)], Player.BLACK, mode="attack")
-
-    assert first != second
-    assert seen_calls == [[(6, 6), (6, 7)], [(6, 6)]]
+    assert 0 < len(searcher._tt) <= 1
 
 
 def test_iterative_deepening_reaches_max_depth_without_time_limit():
@@ -874,95 +627,4 @@ def test_timeout_does_not_leak_simulated_moves_to_board(monkeypatch):
     assert board.move_history == board_before
     assert board.hash == hash_before
     assert board.last_move == (7, 7)
-
-
-def test_leaf_tactical_extension_replaces_static_eval_on_volatile_leaf(monkeypatch):
-    """不安静叶子应进入受限 quiescence，而不是直接静态评估。"""
-    board = Board()
-    searcher = _make_searcher(ai_player=Player.BLACK, depth=1)
-
-    def fake_tactical_moves(current_board: Board, _player: Player) -> list[tuple[int, int]]:
-        return [(7, 7), (7, 8)] if current_board.last_move is None else []
-
-    def fake_evaluate(current_board: Board) -> int:
-        if current_board.last_move is None:
-            return 0
-        return {(7, 7): 5, (7, 8): 11}[current_board.last_move]
-
-    monkeypatch.setattr(searcher, "_tactical_extension_moves", fake_tactical_moves)
-    monkeypatch.setattr(searcher, "_evaluate", fake_evaluate)
-
-    score, move = searcher._minimax(
-        board, 0, -math.inf, math.inf, True, searcher.last_search_stats
-    )
-
-    assert score == 11
-    assert move == (7, 8)
-    assert board.move_history == []
-    assert board.last_move is None
-
-
-def test_leaf_tactical_extension_skips_quiet_positions(monkeypatch):
-    """安静叶子不应做额外延伸，应直接进入静态评估。"""
-    board = Board()
-    board.place(7, 7, Player.BLACK)
-    searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
-    calls = {"extension": 0, "evaluate": 0}
-
-    def fake_tactical_moves(_board: Board, _player: Player) -> list[tuple[int, int]]:
-        calls["extension"] += 1
-        return []
-
-    def fake_evaluate(_board: Board) -> int:
-        calls["evaluate"] += 1
-        return 23
-
-    monkeypatch.setattr(searcher, "_tactical_extension_moves", fake_tactical_moves)
-    monkeypatch.setattr(searcher, "_evaluate", fake_evaluate)
-
-    score, move = searcher._minimax(
-        board, 0, -math.inf, math.inf, True, searcher.last_search_stats
-    )
-
-    assert score == 23
-    assert move is None
-    assert calls == {"extension": 1, "evaluate": 1}
     assert board.grid[7][7] == Player.BLACK
-
-
-def test_quiescence_recurses_until_position_becomes_quiet(monkeypatch):
-    """quiescence 应能继续跟进下一手强制应手，而不止一层。"""
-    board = Board()
-    searcher = _make_searcher(ai_player=Player.BLACK, depth=1)
-    seen_states: list[tuple[tuple[int, int], ...]] = []
-
-    def fake_tactical_moves(current_board: Board, _player: Player) -> list[tuple[int, int]]:
-        history = tuple((row, col) for row, col, _ in current_board.move_history)
-        seen_states.append(history)
-        if history == ():
-            return [(7, 7)]
-        if history == ((7, 7),):
-            return [(7, 8)]
-        return []
-
-    def fake_evaluate(current_board: Board) -> int:
-        history = tuple((row, col) for row, col, _ in current_board.move_history)
-        if history == ():
-            return 0
-        if history == ((7, 7),):
-            return 3
-        if history == ((7, 7), (7, 8)):
-            return 17
-        return -1
-
-    monkeypatch.setattr(searcher, "_tactical_extension_moves", fake_tactical_moves)
-    monkeypatch.setattr(searcher, "_evaluate", fake_evaluate)
-
-    score, move = searcher._minimax(
-        board, 0, -math.inf, math.inf, True, searcher.last_search_stats
-    )
-
-    assert score == 3
-    assert move == (7, 7)
-    assert () in seen_states
-    assert ((7, 7),) in seen_states

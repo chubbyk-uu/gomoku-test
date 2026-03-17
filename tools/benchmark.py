@@ -277,6 +277,7 @@ def run_benchmark(
     player_b: AISearcher,
     num_games: int = 20,
     verbose: bool = True,
+    progress: bool = False,
     print_report: bool = True,
     seed: Optional[int] = None,
     save_json: Optional[str] = None,
@@ -298,6 +299,7 @@ def run_benchmark(
         player_b: "Baseline" searcher (used for depth config).
         num_games: Total number of games to play.
         verbose: Print per-game results.
+        progress: Print cumulative progress after each completed game.
         print_report: Print the final summary report.
 
     Returns:
@@ -368,6 +370,24 @@ def run_benchmark(
                 f"  Game {game_idx + 1:>3}/{num_games}"
                 f"  A={color_a}  moves={num_moves:>3}  {outcome}"
             )
+        if progress:
+            if a_is_black:
+                times_last_a = times_black
+                times_last_b = times_white
+            else:
+                times_last_a = times_white
+                times_last_b = times_black
+            _print_progress(
+                game_index=game_idx + 1,
+                total_games=num_games,
+                result=result,
+                outcome=outcome,
+                num_moves=num_moves,
+                times_last_a=times_last_a,
+                times_last_b=times_last_b,
+                times_total_a=times_a,
+                times_total_b=times_b,
+            )
         result.game_records.append(
             {
                 "game_index": game_idx + 1,
@@ -398,6 +418,32 @@ def run_benchmark(
         )
 
     return result
+
+
+def _format_avg_ms(times: list[float]) -> str:
+    if not times:
+        return "-"
+    return f"{(sum(times) / len(times)) * 1000:.1f}"
+
+
+def _print_progress(
+    game_index: int,
+    total_games: int,
+    result: BenchmarkResult,
+    outcome: str,
+    num_moves: int,
+    times_last_a: list[float],
+    times_last_b: list[float],
+    times_total_a: list[float],
+    times_total_b: list[float],
+) -> None:
+    print(
+        f"[{game_index}/{total_games}] {outcome}  moves={num_moves}"
+        f"  score A/B/D={result.wins_a}/{result.wins_b}/{result.draws}"
+        f"  last_avg_ms A={_format_avg_ms(times_last_a)} B={_format_avg_ms(times_last_b)}"
+        f"  total_avg_ms A={_format_avg_ms(times_total_a)} B={_format_avg_ms(times_total_b)}",
+        flush=True,
+    )
 
 
 def _write_records(

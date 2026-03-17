@@ -2,7 +2,6 @@
 
 import math
 import time
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Optional
 
@@ -13,14 +12,8 @@ from gomoku.ai.threats import (
     classify_defense_moves,
     classify_moves,
 )
-from gomoku.board import Board, count_one_side
-from gomoku.config import (
-    AI_EVAL_CACHE_MAX_SIZE,
-    AI_MAX_CANDIDATES,
-    AI_TT_MAX_SIZE,
-    DIRECTIONS,
-    Player,
-)
+from gomoku.board import Board
+from gomoku.config import AI_EVAL_CACHE_MAX_SIZE, AI_MAX_CANDIDATES, AI_TT_MAX_SIZE, Player
 
 try:
     from gomoku.ai._threat_kernels import analyze_move as _analyze_move_native
@@ -30,31 +23,10 @@ except ImportError:  # pragma: no cover - exercised when extension is not built
 # 置换表条目：(depth, score, flag, best_move)
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
+_DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _ORDERING_RERANK_TOP_K = 8
 _MoveAnalysis = tuple[bool, int]
 _FORCING_SEARCH_DEPTH = 4
-_QUIESCENCE_MAX_DEPTH = 2
-_ThreatCacheKey = tuple[int, int, str, tuple[tuple[int, int], ...]]
-_TACTICAL_DEFENSE_EXTENSION_THREATS: tuple[ThreatType, ...] = (
-    ThreatType.WIN,
-    ThreatType.OPEN_FOUR,
-    ThreatType.DOUBLE_HALF_FOUR,
-    ThreatType.FOUR_THREE,
-    ThreatType.DOUBLE_OPEN_THREE,
-    ThreatType.HALF_FOUR,
-)
-_TACTICAL_ATTACK_EXTENSION_THREATS: tuple[ThreatType, ...] = (
-    ThreatType.WIN,
-    ThreatType.OPEN_FOUR,
-    ThreatType.DOUBLE_HALF_FOUR,
-    ThreatType.FOUR_THREE,
-)
-_FORCING_TRIGGER_THREATS: tuple[ThreatType, ...] = (
-    ThreatType.OPEN_FOUR,
-    ThreatType.DOUBLE_HALF_FOUR,
-    ThreatType.FOUR_THREE,
-    ThreatType.DOUBLE_OPEN_THREE,
-)
 
 
 @dataclass
@@ -111,24 +83,12 @@ class AISearcher:
         self.depth = depth
         self.ai_player = ai_player
         self.time_limit_s = time_limit_s
-        self._opponent = ai_player.opponent
+        self._opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
         self._tt: dict[int, _TTEntry] = {}
         self._eval_cache: dict[int, int] = {}
-        self._threat_cache: dict[_ThreatCacheKey, list] = {}
-        self._killers: list[list[Optional[tuple[int, int]]]] = [
-            [None, None] for _ in range(max(1, depth) + 1)
-        ]
+        self._threat_cache: dict[tuple[int, int, str], list] = {}
         self.last_search_stats = SearchStats()
         self._deadline: Optional[float] = None
-
-    @staticmethod
-    def _evict_oldest(cache: MutableMapping, max_size: int) -> None:
-        """Keep insertion-ordered caches bounded without full invalidation."""
-        if max_size <= 0:
-            cache.clear()
-            return
-        while len(cache) >= max_size:
-            cache.pop(next(iter(cache)))
 
     def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
         """为 AI 找出当前局面下的最优落子位置。
@@ -143,7 +103,6 @@ class AISearcher:
             最优落子坐标 (row, col)；无候选点时返回 None。
         """
         self.last_search_stats = SearchStats()
-        self._killers = [[None, None] for _ in range(max(1, self.depth) + 1)]
         self._deadline = (
             time.perf_counter() + self.time_limit_s if self.time_limit_s is not None else None
         )
@@ -186,7 +145,7 @@ class AISearcher:
             return cached
         score = evaluate(board, self.ai_player)
         if len(self._eval_cache) >= AI_EVAL_CACHE_MAX_SIZE:
-            self._evict_oldest(self._eval_cache, AI_EVAL_CACHE_MAX_SIZE)
+            self._eval_cache.clear()
         self._eval_cache[h] = score
         return score
 
@@ -196,9 +155,9 @@ class AISearcher:
         h: int,
         entry: _TTEntry,
     ) -> None:
-        """写入置换表；超限时淘汰最旧条目，避免长局无限增长。"""
+        """写入置换表；超限时先清空，避免长局无限增长。"""
         if len(tt) >= AI_TT_MAX_SIZE:
-            AISearcher._evict_oldest(tt, AI_TT_MAX_SIZE)
+            tt.clear()
         tt[h] = entry
 
     def _check_timeout(self) -> None:
@@ -214,7 +173,7 @@ class AISearcher:
         mode: str = "both",
     ) -> list:
         """Cache threat classification per board hash and side to avoid recomputation."""
-        key = (board.hash, int(player), mode, tuple(moves))
+        key = (board.hash, int(player), mode)
         cached = self._threat_cache.get(key)
         if cached is not None:
             return cached
@@ -225,7 +184,7 @@ class AISearcher:
         else:
             classified = classify_moves(board, moves, player)
         if len(self._threat_cache) >= AI_EVAL_CACHE_MAX_SIZE:
-            self._evict_oldest(self._threat_cache, AI_EVAL_CACHE_MAX_SIZE)
+            self._threat_cache.clear()
         self._threat_cache[key] = classified
         return classified
 
@@ -244,6 +203,26 @@ class AISearcher:
             return 30 if open_ends == 2 else 5 if open_ends == 1 else 0
         return 0
 
+    @staticmethod
+    def _count_one_side(
+        board: Board,
+        row: int,
+        col: int,
+        dr: int,
+        dc: int,
+        player: Player,
+    ) -> tuple[int, bool]:
+        """统计某一侧连续棋子数量，以及末端是否仍为空。"""
+        grid = board.grid
+        r, c = row + dr, col + dc
+        length = 0
+        while 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == player:
+            length += 1
+            r += dr
+            c += dc
+        is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
+        return length, is_open
+
     def _analyze_move_for_player(
         self,
         board: Board,
@@ -260,9 +239,9 @@ class AISearcher:
             return False, -1
 
         directional_scores: list[int] = []
-        for dr, dc in DIRECTIONS:
-            left_len, left_open = count_one_side(board, row, col, -dr, -dc, player)
-            right_len, right_open = count_one_side(board, row, col, dr, dc, player)
+        for dr, dc in _DIRECTIONS:
+            left_len, left_open = self._count_one_side(board, row, col, -dr, -dc, player)
+            right_len, right_open = self._count_one_side(board, row, col, dr, dc, player)
             total_len = 1 + left_len + right_len
             if total_len >= 5:
                 return True, 200_000
@@ -445,7 +424,7 @@ class AISearcher:
         return True, None
 
     def _opponent_of(self, player: Player) -> Player:
-        return player.opponent
+        return Player.WHITE if player == Player.BLACK else Player.BLACK
 
     def _find_forcing_move(
         self,
@@ -457,122 +436,6 @@ class AISearcher:
             board, current_player, current_player, _FORCING_SEARCH_DEPTH
         )
         return move if success else None
-
-    def _should_try_forcing_search(
-        self,
-        board: Board,
-        moves: list[tuple[int, int]],
-        current_player: Player,
-        depth: int,
-    ) -> bool:
-        """Run forcing search only on shallow-enough, tactically charged nodes."""
-        if depth < 3:
-            return False
-
-        attack_infos = self._classify_moves_cached(board, moves, current_player, mode="attack")
-        return any(info.attack_type in _FORCING_TRIGGER_THREATS for info in attack_infos)
-
-    def _tactical_extension_moves(
-        self,
-        board: Board,
-        current_player: Player,
-    ) -> list[tuple[int, int]]:
-        """Return high-urgency tactical replies for unstable leaf nodes."""
-        moves = board.get_candidate_moves()
-        if not moves:
-            return []
-
-        defense_infos = self._classify_moves_cached(board, moves, current_player, mode="defense")
-        for threat_type in _TACTICAL_DEFENSE_EXTENSION_THREATS:
-            threat_moves = [info.move for info in defense_infos if info.defense_type == threat_type]
-            if threat_moves:
-                return sorted(threat_moves)
-
-        attack_infos = self._classify_moves_cached(board, moves, current_player, mode="attack")
-        for threat_type in _TACTICAL_ATTACK_EXTENSION_THREATS:
-            threat_moves = [info.move for info in attack_infos if info.attack_type == threat_type]
-            if threat_moves:
-                return sorted(threat_moves)
-
-        return []
-
-    def _quiescence(
-        self,
-        board: Board,
-        alpha: float,
-        beta: float,
-        maximizing: bool,
-        current_player: Player,
-        stats: SearchStats,
-        qdepth: int = 0,
-    ) -> tuple[float, Optional[tuple[int, int]]]:
-        """Stabilize volatile leaves by recursively searching tactical moves only."""
-        self._check_timeout()
-        stats.leaf_evals += 1
-        stand_pat = self._evaluate(board)
-        if qdepth >= _QUIESCENCE_MAX_DEPTH:
-            return stand_pat, None
-
-        tactical_moves = self._tactical_extension_moves(board, current_player)
-        if not tactical_moves:
-            return stand_pat, None
-
-        best_move: Optional[tuple[int, int]] = None
-
-        if maximizing:
-            if stand_pat >= beta:
-                return stand_pat, None
-            best_score = stand_pat
-            alpha = max(alpha, stand_pat)
-            for row, col in tactical_moves:
-                self._check_timeout()
-                board.place(row, col, current_player)
-                try:
-                    score, _ = self._quiescence(
-                        board,
-                        alpha,
-                        beta,
-                        False,
-                        self._opponent_of(current_player),
-                        stats,
-                        qdepth=qdepth + 1,
-                    )
-                finally:
-                    board.undo()
-                if score > best_score:
-                    best_score = score
-                    best_move = (row, col)
-                alpha = max(alpha, best_score)
-                if beta <= alpha:
-                    break
-            return best_score, best_move
-
-        if stand_pat <= alpha:
-            return stand_pat, None
-        best_score = stand_pat
-        beta = min(beta, stand_pat)
-        for row, col in tactical_moves:
-            self._check_timeout()
-            board.place(row, col, current_player)
-            try:
-                score, _ = self._quiescence(
-                    board,
-                    alpha,
-                    beta,
-                    True,
-                    self._opponent_of(current_player),
-                    stats,
-                    qdepth=qdepth + 1,
-                )
-            finally:
-                board.undo()
-            if score < best_score:
-                best_score = score
-                best_move = (row, col)
-            beta = min(beta, best_score)
-            if beta <= alpha:
-                break
-        return best_score, best_move
 
     @staticmethod
     def _dynamic_cutoff(
@@ -615,7 +478,6 @@ class AISearcher:
         current_player: Player,
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
-        ply: int = 0,
         current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
         opponent_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
     ) -> list[tuple[int, int]]:
@@ -631,57 +493,18 @@ class AISearcher:
             ThreatType.OPEN_FOUR,
             ThreatType.DOUBLE_HALF_FOUR,
             ThreatType.FOUR_THREE,
+            ThreatType.DOUBLE_OPEN_THREE,
         ):
             threat_moves = defense_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_special_moves(threat_moves, tt_move, ply)
+                return self._prioritize_tt_move(threat_moves, tt_move)
 
         attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
             threat_type: [] for threat_type in ThreatType
         }
         for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
             attack_grouped[info.attack_type].append(info.move)
-
-        attack_half_four_or_better = any(
-            attack_grouped[threat_type]
-            for threat_type in (
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.FOUR_THREE,
-                ThreatType.HALF_FOUR,
-            )
-        )
-
-        if defense_grouped[ThreatType.HALF_FOUR] and not attack_half_four_or_better:
-            threat_moves = defense_grouped[ThreatType.HALF_FOUR]
-            threat_moves.sort()
-            return self._prioritize_special_moves(threat_moves, tt_move, ply)
-
-        # 对手最高威胁只到活三系时，允许我方用更强的先手（至少冲四）继续抢攻。
-        if (
-            defense_grouped[ThreatType.DOUBLE_OPEN_THREE]
-            or defense_grouped[ThreatType.OPEN_THREE]
-        ):
-            for threat_type in (
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.FOUR_THREE,
-                ThreatType.HALF_FOUR,
-            ):
-                threat_moves = attack_grouped[threat_type]
-                if threat_moves:
-                    threat_moves.sort()
-                    return self._prioritize_special_moves(threat_moves, tt_move, ply)
-            if defense_grouped[ThreatType.DOUBLE_OPEN_THREE]:
-                threat_moves = defense_grouped[ThreatType.DOUBLE_OPEN_THREE]
-                threat_moves.sort()
-                return self._prioritize_special_moves(threat_moves, tt_move, ply)
-            threat_moves = defense_grouped[ThreatType.OPEN_THREE]
-            threat_moves.sort()
-            return self._prioritize_special_moves(threat_moves, tt_move, ply)
 
         for threat_type in (
             ThreatType.WIN,
@@ -693,7 +516,7 @@ class AISearcher:
             threat_moves = attack_grouped[threat_type]
             if threat_moves:
                 threat_moves.sort()
-                return self._prioritize_special_moves(threat_moves, tt_move, ply)
+                return self._prioritize_tt_move(threat_moves, tt_move)
 
         opponent = self.ai_player if current_player == self._opponent else self._opponent
         if opponent_move_analysis is None:
@@ -701,7 +524,7 @@ class AISearcher:
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
             ordered_blocks = sorted(blocking_moves)
-            return self._prioritize_special_moves(ordered_blocks, tt_move, ply)
+            return self._prioritize_tt_move(ordered_blocks, tt_move)
 
         if current_move_analysis is None:
             current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
@@ -725,9 +548,7 @@ class AISearcher:
         reranked = self._rerank_top_moves(
             board, selected_moves, rerank_limit, current_player, stats
         )
-        return self._prioritize_special_moves(
-            [(r, c) for r, c, _, _, _ in reranked], tt_move, ply
-        )
+        return self._prioritize_tt_move([(r, c) for r, c, _, _, _ in reranked], tt_move)
 
     def _rerank_top_moves(
         self,
@@ -770,49 +591,6 @@ class AISearcher:
             return moves
         return [moves[idx], *moves[:idx], *moves[idx + 1 :]]
 
-    @staticmethod
-    def _prioritize_killer_moves(
-        moves: list[tuple[int, int]],
-        killers: list[Optional[tuple[int, int]]],
-    ) -> list[tuple[int, int]]:
-        """Promote killer moves after TT ordering, without changing the move set."""
-        prioritized: list[tuple[int, int]] = []
-        seen: set[tuple[int, int]] = set()
-        for killer in killers:
-            if killer is not None and killer in moves and killer not in seen:
-                prioritized.append(killer)
-                seen.add(killer)
-        prioritized.extend(move for move in moves if move not in seen)
-        return prioritized
-
-    def _prioritize_special_moves(
-        self,
-        moves: list[tuple[int, int]],
-        tt_move: Optional[tuple[int, int]],
-        ply: int,
-    ) -> list[tuple[int, int]]:
-        """Apply TT move first, then killer moves for the current ply."""
-        ordered = self._prioritize_tt_move(moves, tt_move)
-        if ply < len(self._killers):
-            if tt_move is not None and ordered and ordered[0] == tt_move:
-                ordered = [
-                    ordered[0],
-                    *self._prioritize_killer_moves(ordered[1:], self._killers[ply]),
-                ]
-            else:
-                ordered = self._prioritize_killer_moves(ordered, self._killers[ply])
-        return ordered
-
-    def _record_killer_move(self, ply: int, move: Optional[tuple[int, int]]) -> None:
-        """Remember cutoff-causing moves for sibling ordering at the same ply."""
-        if move is None or ply >= len(self._killers):
-            return
-        killers = self._killers[ply]
-        if killers[0] == move:
-            return
-        killers[1] = killers[0]
-        killers[0] = move
-
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -825,8 +603,6 @@ class AISearcher:
         beta: float,
         maximizing: bool,
         stats: SearchStats,
-        allow_tactical_extension: bool = True,
-        ply: int = 0,
     ) -> tuple[float, Optional[tuple[int, int]]]:
         """Minimax 递归搜索（Alpha-Beta 剪枝 + 置换表）。
 
@@ -850,7 +626,6 @@ class AISearcher:
         stats.nodes += 1
         h = board.hash
         alpha_orig = alpha  # 保存调用方传入的 alpha，供事后判断 flag
-        current_player = self.ai_player if maximizing else self._opponent
 
         # --- 置换表查询 ---
         entry = self._tt.get(h)
@@ -870,14 +645,6 @@ class AISearcher:
 
         # --- 叶节点 ---
         if depth == 0:
-            if allow_tactical_extension:
-                tactical_moves = self._tactical_extension_moves(board, current_player)
-                if tactical_moves:
-                    score, move = self._quiescence(
-                        board, alpha, beta, maximizing, current_player, stats
-                    )
-                    self._store_tt(self._tt, h, (0, score, "E", move))
-                    return score, move
             stats.leaf_evals += 1
             score = self._evaluate(board)
             self._store_tt(self._tt, h, (0, score, "E", None))
@@ -891,6 +658,7 @@ class AISearcher:
             self._store_tt(self._tt, h, (depth, score, "E", None))
             return score, None
 
+        current_player = self.ai_player if maximizing else self._opponent
         stats.max_branching = max(stats.max_branching, len(moves))
         tt_move = entry[3] if entry is not None else None
 
@@ -908,9 +676,7 @@ class AISearcher:
         opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         opponent_winning_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
 
-        if not opponent_winning_moves and self._should_try_forcing_search(
-            board, moves, current_player, depth
-        ):
+        if not opponent_winning_moves:
             forcing_move = self._find_forcing_move(board, current_player)
             if forcing_move is not None:
                 stats.forcing_wins += 1
@@ -925,7 +691,6 @@ class AISearcher:
             current_player,
             tt_move,
             stats,
-            ply=ply,
             current_move_analysis=current_move_analysis,
             opponent_move_analysis=opponent_move_analysis,
         )
@@ -938,22 +703,16 @@ class AISearcher:
                 self._check_timeout()
                 board.place(row, col, current_player)
                 try:
-                    score, _ = self._minimax(
-                        board, depth - 1, alpha, beta, False, stats, ply=ply + 1
-                    )
+                    score, _ = self._minimax(board, depth - 1, alpha, beta, False, stats)
                 finally:
                     board.undo()
-                candidate_move = (row, col)
-                if score > best_score or (
-                    score == best_score and best_move is not None and candidate_move < best_move
-                ):
+                if score > best_score:
                     best_score = score
-                    best_move = candidate_move
+                    best_move = (row, col)
                 alpha = max(alpha, best_score)
                 if beta <= alpha:
                     # beta 截断：真实值 >= best_score，存为下界
                     stats.beta_cutoffs += 1
-                    self._record_killer_move(ply, best_move)
                     self._store_tt(self._tt, h, (depth, best_score, "L", best_move))
                     return best_score, best_move
             # 无截断：判断是精确值还是上界（未能超过 alpha_orig）
@@ -966,22 +725,16 @@ class AISearcher:
                 self._check_timeout()
                 board.place(row, col, current_player)
                 try:
-                    score, _ = self._minimax(
-                        board, depth - 1, alpha, beta, True, stats, ply=ply + 1
-                    )
+                    score, _ = self._minimax(board, depth - 1, alpha, beta, True, stats)
                 finally:
                     board.undo()
-                candidate_move = (row, col)
-                if score < best_score or (
-                    score == best_score and best_move is not None and candidate_move < best_move
-                ):
+                if score < best_score:
                     best_score = score
-                    best_move = candidate_move
+                    best_move = (row, col)
                 beta = min(beta, best_score)
                 if beta <= alpha:
                     # alpha 截断：真实值 <= best_score，存为上界
                     stats.alpha_cutoffs += 1
-                    self._record_killer_move(ply, best_move)
                     self._store_tt(self._tt, h, (depth, best_score, "U", best_move))
                     return best_score, best_move
             # 无截断：所有候选点均已遍历，best_score 是精确最小值

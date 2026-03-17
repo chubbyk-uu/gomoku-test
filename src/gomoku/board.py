@@ -5,7 +5,7 @@ from typing import Optional
 
 import numpy as np
 
-from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, DIRECTIONS, Player
+from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, Player
 
 _CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
     (dr, dc)
@@ -152,7 +152,7 @@ class Board:
 
             return length
 
-        for dr, dc in DIRECTIONS:
+        for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
             if _count_direction(dr, dc) >= 5:
                 return True
         return False
@@ -192,23 +192,3 @@ class Board:
         new_board._candidate_history = [(a.copy(), r.copy()) for a, r in self._candidate_history]
         new_board._eval_state = None
         return new_board
-
-
-def count_one_side(
-    board: Board,
-    row: int,
-    col: int,
-    dr: int,
-    dc: int,
-    player: Player,
-) -> tuple[int, bool]:
-    """Count contiguous stones on one side and whether the next cell stays open."""
-    grid = board.grid
-    r, c = row + dr, col + dc
-    length = 0
-    while 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == player:
-        length += 1
-        r += dr
-        c += dc
-    is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
-    return length, is_open

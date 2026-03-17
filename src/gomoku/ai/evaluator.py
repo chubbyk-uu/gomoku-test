@@ -4,7 +4,7 @@ from enum import IntEnum
 from functools import lru_cache
 
 from gomoku.board import Board
-from gomoku.config import BOARD_SIZE, DIRECTIONS, Player
+from gomoku.config import BOARD_SIZE, Player
 
 try:
     from gomoku.ai._threat_kernels import count_shapes_on_line as _count_shapes_on_line_native
@@ -41,6 +41,7 @@ SHAPE_SCORE: dict[Shape, int] = {
 # 防守加权：对手威胁分的乘数
 DEFENSE_WEIGHT: float = 1.2
 
+_DIRECTIONS: list[tuple[int, int]] = [(1, 0), (0, 1), (1, 1), (1, -1)]
 _PLAYERS: tuple[Player, Player] = (Player.BLACK, Player.WHITE)
 _SHAPES_ASC: tuple[Shape, ...] = tuple(sorted(Shape, key=int))
 _ZERO_COUNTS: tuple[int, ...] = (0,) * len(_SHAPES_ASC)
@@ -91,7 +92,7 @@ def _extract_line_from_array(
     return tuple(line)
 
 
-@lru_cache(maxsize=65536)
+@lru_cache(maxsize=8192)
 def _match_shapes_cached(line: tuple[int, ...]) -> tuple[Shape, ...]:
     """对一条 9 格线段，识别中心点（index=4）参与的所有棋型。"""
     if line[4] != _X:
@@ -341,7 +342,7 @@ def _count_shapes_on_line(
     seen_indices: set[int] = set()
     counts = {shape: 0 for shape in Shape}
 
-    dr, dc = DIRECTIONS[direction_index]
+    dr, dc = _DIRECTIONS[direction_index]
     for idx, (row, col) in enumerate(coords):
         if idx in seen_indices or board.grid[row, col] != player_val:
             continue
@@ -371,7 +372,7 @@ def _count_shapes_legacy(board: Board, player: Player) -> dict[Shape, int]:
         for j in range(BOARD_SIZE):
             if grid[i][j] != player_val:
                 continue
-            for dr, dc in DIRECTIONS:
+            for dr, dc in _DIRECTIONS:
                 key = (i, j, dr, dc)
                 if key in seen:
                     continue
@@ -406,7 +407,7 @@ class _BoardEvalState:
     def _initialize(self, board: Board) -> None:
         for player in _PLAYERS:
             total = list(_ZERO_COUNTS)
-            for direction_index in range(len(DIRECTIONS)):
+            for direction_index in range(len(_DIRECTIONS)):
                 max_line_id = BOARD_SIZE if direction_index < 2 else BOARD_SIZE * 2 - 1
                 for line_id in range(max_line_id):
                     counts = _count_shapes_on_line(board, player, direction_index, line_id)
@@ -418,7 +419,7 @@ class _BoardEvalState:
     def on_board_changed(self, board: Board, row: int, col: int) -> None:
         for player in _PLAYERS:
             total = self.total_counts[player]
-            for direction_index in range(len(DIRECTIONS)):
+            for direction_index in range(len(_DIRECTIONS)):
                 line_id = _line_id_for_cell(direction_index, row, col)
                 key = (direction_index, line_id)
                 old_counts = self.line_counts[player][key]
@@ -456,7 +457,7 @@ def _count_shapes_after_move(
     totals = list(state.total_counts[player])
     board.grid[row, col] = player
     try:
-        for direction_index in range(len(DIRECTIONS)):
+        for direction_index in range(len(_DIRECTIONS)):
             line_id = _line_id_for_cell(direction_index, row, col)
             key = (direction_index, line_id)
             old_counts = state.line_counts[player][key]
@@ -511,7 +512,7 @@ def _calc_total(counts: dict[Shape, int]) -> int:
 
 def evaluate(board: Board, ai_player: Player) -> int:
     """评估当前棋盘对 ai_player 的净分值。"""
-    opponent = ai_player.opponent
+    opponent = Player.WHITE if ai_player == Player.BLACK else Player.BLACK
     ai_counts = _count_shapes(board, ai_player)
     opp_counts = _count_shapes(board, opponent)
     ai_score = _calc_total(ai_counts)
