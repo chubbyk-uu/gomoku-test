@@ -1,5 +1,6 @@
 """Tests for the self-play benchmark helpers."""
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -94,3 +95,67 @@ def test_run_benchmark_can_cap_game_length(tmp_path):
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["max_moves"] == 1
     assert payload["game_lengths"] == [1]
+
+
+def test_run_benchmark_cli_defaults_to_even_depths(monkeypatch):
+    module = importlib.import_module("run_benchmark")
+    captured: dict[str, object] = {}
+
+    class DummySearcher:
+        def __init__(self, depth, ai_player, time_limit_s=None):
+            self.depth = depth
+            self.ai_player = ai_player
+            self.time_limit_s = time_limit_s
+
+    def fake_run_benchmark(player_a, player_b, **kwargs):
+        captured["depth_a"] = player_a.depth
+        captured["depth_b"] = player_b.depth
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(module, "AISearcher", DummySearcher)
+    monkeypatch.setattr(module, "run_benchmark", fake_run_benchmark)
+    monkeypatch.setattr(sys, "argv", ["run_benchmark.py", "--games", "1", "--quiet"])
+
+    module.main()
+
+    assert captured["depth_a"] == 4
+    assert captured["depth_b"] == 4
+
+
+def test_run_puzzle_benchmark_cli_defaults_to_even_depth(monkeypatch, capsys):
+    module = importlib.import_module("run_puzzle_benchmark")
+    captured: dict[str, object] = {}
+
+    class DummySearcher:
+        def __init__(self, depth, ai_player, time_limit_s=None):
+            self.depth = depth
+            self.ai_player = ai_player
+            self.time_limit_s = time_limit_s
+
+    class DummyResult:
+        case_name = "dummy"
+        solved = True
+        expected_moves = {(7, 7)}
+        acceptable_moves = set()
+        forbidden_moves = set()
+        move = (7, 7)
+        elapsed_s = 0.0
+        stats = type("Stats", (), {"nodes": 1, "forcing_wins": 0})()
+
+    monkeypatch.setattr(module, "AISearcher", DummySearcher)
+    monkeypatch.setattr(module, "default_puzzle_cases", lambda: [])
+
+    def fake_run_puzzle_suite(make_searcher, cases, repeat):
+        captured["depth"] = make_searcher(module.Player.BLACK).depth
+        captured["repeat"] = repeat
+        return [DummyResult()]
+
+    monkeypatch.setattr(module, "run_puzzle_suite", fake_run_puzzle_suite)
+    monkeypatch.setattr(module, "summarize_puzzle_results", lambda results: {})
+    monkeypatch.setattr(sys, "argv", ["run_puzzle_benchmark.py"])
+
+    module.main()
+    capsys.readouterr()
+
+    assert captured["depth"] == 4
+    assert captured["repeat"] == 1

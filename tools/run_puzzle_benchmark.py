@@ -24,7 +24,7 @@ def main() -> None:
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--depth", type=int, default=3, metavar="N", help="Search depth")
+    parser.add_argument("--depth", type=int, default=4, metavar="N", help="Search depth")
     parser.add_argument(
         "--repeat",
         type=int,

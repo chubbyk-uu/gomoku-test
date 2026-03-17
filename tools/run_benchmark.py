@@ -2,8 +2,8 @@
 
 Usage:
     python tools/run_benchmark.py
-    python tools/run_benchmark.py --depth-a 3 --depth-b 2 --games 20
-    python tools/run_benchmark.py --depth-a 4 --depth-b 3 --games 10 --quiet
+    python tools/run_benchmark.py --depth-a 4 --depth-b 4 --games 20
+    python tools/run_benchmark.py --depth-a 6 --depth-b 4 --games 10 --quiet
 """
 
 import argparse
@@ -26,10 +26,10 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--depth-a", type=int, default=3, metavar="N", help="Search depth for Player A"
+        "--depth-a", type=int, default=4, metavar="N", help="Search depth for Player A"
     )
     parser.add_argument(
-        "--depth-b", type=int, default=2, metavar="N", help="Search depth for Player B"
+        "--depth-b", type=int, default=4, metavar="N", help="Search depth for Player B"
     )
     parser.add_argument(
         "--games", type=int, default=20, metavar="N", help="Number of games to play"
