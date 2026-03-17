@@ -8,8 +8,9 @@
 - 支持人机对弈，玩家可选执黑或执白
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
+- 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
-  - 最大搜索深度：`4`
+  - 最大搜索深度：`6`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`15`
   - 候选邻域半径：`2`
@@ -27,6 +28,7 @@
 - 增量评估状态缓存
 - `Cython` 热点内核（threat / move analysis / line counting）
 - 最后一手高亮显示
+- 棋盘坐标与天元标记
 
 ## 安装
 
@@ -292,7 +294,7 @@ ruff check .
 配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku-test/src/gomoku/config.py)。
 
 ```python
-AI_SEARCH_DEPTH = 5
+AI_SEARCH_DEPTH = 6
 AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 15
 AI_CANDIDATE_RANGE = 2
