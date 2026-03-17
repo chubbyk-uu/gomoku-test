@@ -32,9 +32,12 @@
 
 环境要求：`Python 3.10+`
 
-推荐安装开发依赖：
+推荐先创建虚拟环境，再安装开发依赖：
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 pip install -e ".[dev]"
 ```
 
@@ -44,13 +47,38 @@ pip install -e ".[dev]"
 pip install pygame numpy
 ```
 
-如需启用 `Cython` 扩展的本地构建：
+### 启用 Cython 加速
+
+项目中的 `Cython` 扩展是可选加速层，不影响功能正确性：
+
+- 如果本地扩展已成功编译，运行时会自动加载原生模块
+- 如果扩展未编译成功，会自动回退到纯 Python 实现
+
+在新机器上，如需完整编译并启用 `Cython` 加速，通常需要先安装本机编译环境：
+
+- Linux (Debian / Ubuntu)：`python3-dev build-essential`
+- Linux (Fedora)：`python3-devel gcc`
+- Windows：需要可用的 MSVC Build Tools
+
+安装项目后，可显式构建扩展：
 
 ```bash
 python setup.py build_ext --inplace
 ```
 
-未构建扩展时会自动回退到纯 Python 实现。
+如果已经执行过 `pip install -e ".[dev]"`，且本机具备编译环境，通常也会在安装过程中自动构建扩展；上面的命令适合手动重建或显式确认。
+
+### 验证扩展是否已生效
+
+从仓库根目录执行：
+
+```bash
+PYTHONPATH=src python -c "import gomoku.ai._threat_kernels as m; print(m.__file__)"
+```
+
+如果输出路径指向 `.so`（Linux / macOS）或 `.pyd`（Windows），说明 `Cython` 扩展已生效。
+
+如果导入失败，游戏仍可运行，只是会自动使用纯 Python fallback。
 
 ## 运行
 
