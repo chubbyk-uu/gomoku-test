@@ -24,6 +24,7 @@ from gomoku.config import (
     AI_VCF_ENABLED,
     AI_VCF_MAX_CANDIDATES,
     AI_VCF_MAX_DEPTH,
+    BOARD_SIZE,
     Player,
 )
 
@@ -616,7 +617,7 @@ class AISearcher:
         current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
         immediate_wins = [move for move, (is_win, _) in current_move_analysis.items() if is_win]
         if immediate_wins:
-            immediate_wins.sort()
+            immediate_wins.sort(key=lambda move: self._symmetry_move_key(board, move))
             prioritized = self._prioritize_special_moves(immediate_wins, tt_move, killer_moves)
             return _cap_quiescence_moves(prioritized)
 
@@ -624,7 +625,7 @@ class AISearcher:
         opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
-            blocking_moves.sort()
+            blocking_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
             prioritized = self._prioritize_special_moves(blocking_moves, tt_move, killer_moves)
             return _cap_quiescence_moves(prioritized)
 
@@ -637,7 +638,7 @@ class AISearcher:
         for threat_type in _QUIESCENCE_THREATS[1:]:
             threat_moves = defense_grouped[threat_type]
             if threat_moves:
-                threat_moves.sort()
+                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
                 prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
                 return _cap_quiescence_moves(prioritized)
 
@@ -650,7 +651,7 @@ class AISearcher:
         for threat_type in _QUIESCENCE_THREATS[1:]:
             threat_moves = attack_grouped[threat_type]
             if threat_moves:
-                threat_moves.sort()
+                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
                 prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
                 return _cap_quiescence_moves(prioritized)
 
@@ -764,7 +765,7 @@ class AISearcher:
         ):
             threat_moves = defense_grouped[threat_type]
             if threat_moves:
-                threat_moves.sort()
+                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
                 return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
 
         attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
@@ -782,7 +783,7 @@ class AISearcher:
         ):
             threat_moves = attack_grouped[threat_type]
             if threat_moves:
-                threat_moves.sort()
+                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
                 return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
 
         opponent = self.ai_player if current_player == self._opponent else self._opponent
@@ -790,7 +791,10 @@ class AISearcher:
             opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
         blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
         if blocking_moves:
-            ordered_blocks = sorted(blocking_moves)
+            ordered_blocks = sorted(
+                blocking_moves,
+                key=lambda move: self._symmetry_move_key(board, move),
+            )
             return self._prioritize_special_moves(ordered_blocks, tt_move, killer_moves)
 
         if current_move_analysis is None:
@@ -807,7 +811,14 @@ class AISearcher:
             total_score = attack_score * 2 + defense_score * 3
             scored_moves.append((r, c, total_score, attack_score, defense_score))
 
-        scored_moves.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
+        scored_moves.sort(
+            key=lambda x: (
+                -x[2],
+                -x[3],
+                -x[4],
+                *self._symmetry_move_key(board, (x[0], x[1])),
+            )
+        )
 
         cutoff = self._dynamic_cutoff(scored_moves, AI_MAX_CANDIDATES)
         selected_moves = scored_moves[:cutoff]
@@ -841,8 +852,31 @@ class AISearcher:
                 board.undo()
             reranked_prefix.append((row, col, exact_score, attack_score, defense_score))
 
-        reranked_prefix.sort(key=lambda x: (x[2], x[3], x[4], x[0], x[1]), reverse=True)
+        reranked_prefix.sort(
+            key=lambda x: (
+                -x[2],
+                -x[3],
+                -x[4],
+                *self._symmetry_move_key(board, (x[0], x[1])),
+            )
+        )
         return reranked_prefix + scored_moves[rerank_limit:]
+
+    def _symmetry_move_key(self, board: Board, move: tuple[int, int]) -> tuple[int, int, int, int]:
+        """Return a tie-break key that avoids absolute row/col direction bias."""
+        row, col = move
+        center = (BOARD_SIZE - 1) // 2
+        center_dr = abs(row - center)
+        center_dc = abs(col - center)
+        last_row, last_col = board.last_move if board.last_move is not None else (center, center)
+        last_dr = abs(row - last_row)
+        last_dc = abs(col - last_col)
+        return (
+            max(last_dr, last_dc),
+            last_dr + last_dc,
+            max(center_dr, center_dc),
+            center_dr + center_dc,
+        )
 
     @staticmethod
     def _prioritize_tt_move(

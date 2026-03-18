@@ -32,7 +32,11 @@ def main() -> None:
         "--depth-b", type=int, default=4, metavar="N", help="Search depth for Player B"
     )
     parser.add_argument(
-        "--games", type=int, default=20, metavar="N", help="Number of games to play"
+        "--games",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Number of games to play; use 0 for unlimited until interrupted",
     )
     parser.add_argument(
         "--repo-a",
@@ -82,7 +86,8 @@ def main() -> None:
 
     print(f"Player A  depth={args.depth_a}")
     print(f"Player B  depth={args.depth_b}")
-    print(f"Games     {args.games}")
+    games_display = "unlimited" if args.games <= 0 else str(args.games)
+    print(f"Games     {games_display}")
     if args.repo_a:
         print(f"Repo A    {args.repo_a}")
     if args.repo_b:

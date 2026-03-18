@@ -126,6 +126,8 @@ def _play_game(
     times_white: list[float],
     stats_black: list[SearchStats],
     stats_white: list[SearchStats],
+    label_black: str,
+    label_white: str,
     max_moves: int | None = None,
 ) -> tuple[Optional[Player], int, list[dict]]:
     """Play a single game to completion.
@@ -175,18 +177,20 @@ def _play_game(
             return None, num_moves, move_records  # no candidates — treat as draw
 
         row, col = move
+        board.place(row, col, current)
         move_records.append(
             {
                 "move_no": num_moves + 1,
+                "engine": label_black if current == Player.BLACK else label_white,
                 "player": current.name,
                 "row": row,
                 "col": col,
+                "opening_random": num_moves == 0,
                 "elapsed_ms": round(elapsed_s * 1000, 3),
                 "stats": last_stats,
                 "trace": last_trace,
             }
         )
-        board.place(row, col, current)
         num_moves += 1
 
         if board.check_win(row, col):
@@ -327,7 +331,9 @@ def run_benchmark(
     stats_a: list[SearchStats] = []
     stats_b: list[SearchStats] = []
 
-    for game_idx in range(num_games):
+    game_idx = 0
+    unlimited_games = num_games <= 0
+    while unlimited_games or game_idx < num_games:
         # 随机分配颜色，保证大数上均衡但每局不可预测
         a_is_black = random.random() < 0.5
         if a_is_black:
@@ -344,7 +350,15 @@ def run_benchmark(
 
         try:
             winner, num_moves, move_records = _play_game(
-                sb, sw, times_black, times_white, stats_black, stats_white, max_moves=max_moves
+                sb,
+                sw,
+                times_black,
+                times_white,
+                stats_black,
+                stats_white,
+                label_black="A" if a_is_black else "B",
+                label_white="B" if a_is_black else "A",
+                max_moves=max_moves,
             )
         finally:
             sb.close()
@@ -391,7 +405,7 @@ def run_benchmark(
                 times_last_b = times_black
             _print_progress(
                 game_index=game_idx + 1,
-                total_games=num_games,
+                total_games=None if unlimited_games else num_games,
                 result=result,
                 outcome=outcome,
                 num_moves=num_moves,
@@ -404,6 +418,8 @@ def run_benchmark(
             {
                 "game_index": game_idx + 1,
                 "a_color": "BLACK" if a_is_black else "WHITE",
+                "black_engine": "A" if a_is_black else "B",
+                "white_engine": "B" if a_is_black else "A",
                 "repo_a": result.repo_a,
                 "repo_b": result.repo_b,
                 "winner": winner.name if winner is not None else "DRAW",
@@ -411,6 +427,16 @@ def run_benchmark(
                 "moves": move_records,
             }
         )
+        if save_json is not None:
+            _write_records(
+                Path(save_json),
+                result,
+                player_a.depth,
+                player_b.depth,
+                seed,
+                max_moves,
+            )
+        game_idx += 1
 
     result.move_times_a = times_a
     result.move_times_b = times_b
@@ -440,7 +466,7 @@ def _format_avg_ms(times: list[float]) -> str:
 
 def _print_progress(
     game_index: int,
-    total_games: int,
+    total_games: int | None,
     result: BenchmarkResult,
     outcome: str,
     num_moves: int,
@@ -449,8 +475,9 @@ def _print_progress(
     times_total_a: list[float],
     times_total_b: list[float],
 ) -> None:
+    total_display = str(total_games) if total_games is not None else "..."
     print(
-        f"[{game_index}/{total_games}] {outcome}  moves={num_moves}"
+        f"[{game_index}/{total_display}] {outcome}  moves={num_moves}"
         f"  score A/B/D={result.wins_a}/{result.wins_b}/{result.draws}"
         f"  last_avg_ms A={_format_avg_ms(times_last_a)} B={_format_avg_ms(times_last_b)}"
         f"  total_avg_ms A={_format_avg_ms(times_total_a)} B={_format_avg_ms(times_total_b)}",
