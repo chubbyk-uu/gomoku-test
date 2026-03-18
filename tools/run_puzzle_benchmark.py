@@ -74,7 +74,6 @@ def main() -> None:
             f" move={result.move!s:<10}"
             f" time={result.elapsed_s:>6.3f}s"
             f" nodes={result.stats.nodes:>4}"
-            f" forcing={result.stats.forcing_wins:>2}"
         )
         if target_desc:
             print(f"      {target_desc}")

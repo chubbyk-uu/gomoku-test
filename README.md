@@ -1,6 +1,6 @@
 # 五子棋 (Gomoku)
 
-基于 `Pygame` 的五子棋人机对弈项目。AI 目前使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、受限 quiescence、威胁分类、内部 forcing search、killer heuristic，以及若干 `Cython` 热点加速。
+基于 `Pygame` 的五子棋人机对弈项目。AI 当前主线使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、killer heuristic，以及若干 `Cython` 热点加速。
 
 ## 当前状态
 
@@ -9,18 +9,15 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
-- 当前稳定版本保留：`VCF + quiescence + minimax`，主入口 forcing search 默认关闭
+- 当前稳定版本保留：`VCF + minimax + TT + killer + local hotness ordering`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`20`
   - 候选邻域半径：`2`
-  - 根节点 rerank：`8`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
-  - quiescence 最大额外 ply：`8`
-  - quiescence 候选上限：`3`
 
 ## 主要特性
 
@@ -30,9 +27,6 @@
 - Killer Heuristic
 - 评估缓存
 - 独立 `VCF` 战术证明器
-- 受限 quiescence（仅扩展高优先级战术手）
-- 候选点动态截断与两阶段排序
-- 威胁分类与内部 forcing search
 - 一步成五预检查
 - 增量候选点维护
 - 增量评估状态缓存
@@ -131,7 +125,7 @@ python -m gomoku
 
 ### 搜索
 
-AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/searcher.py)。
+AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/searcher.py)。
 
 当前搜索流程大致包括：
 
@@ -139,16 +133,13 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 - 一步防输预检查
 - `VCF` 必胜 / 防杀预检查
 - 迭代加深，从 `depth=1` 逐层加深到最大深度
-- 叶子 quiescence，避免明显战术未收束时直接静态评估
 - 置换表复用历史搜索结果
-- 内部 forcing search（仅在 `minimax` 递归内作为辅助，不在主入口直接返回）
 - killer move 优先级
-- 威胁优先候选生成
-- 普通候选的局部粗排、动态截断、精排
+- 基于 `local_hotness` 的候选排序
 
 ### VCF
 
-`VCF` 求解器位于 [src/gomoku/ai/vcf.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/vcf.py)。
+`VCF` 求解器位于 [src/gomoku/ai/vcf.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/vcf.py)。
 
 当前实现特性包括：
 
@@ -160,12 +151,12 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 
 当前 `VCF` 采用“两段式”：
 
-- 先用局部原生 probe / 威胁分类拿到强攻种子
+- 先用局部原生 probe / threat analysis 拿到强攻种子
 - 再对候选真实落子，验证是否直接赢或制造下一步立即赢
 
 ### 评估函数
 
-评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/evaluator.py)。
+评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/evaluator.py)。
 
 当前使用模式识别打分，覆盖：
 
@@ -184,23 +175,9 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/llm_code_learn/claude
 - 局面净分评估
 - 增量线计数缓存
 
-### 威胁分类
-
-威胁分类位于 [src/gomoku/ai/threats.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/threats.py)。
-
-当前会识别和使用的核心类别包括：
-
-- `WIN`
-- `OPEN_FOUR`
-- `DOUBLE_HALF_FOUR`
-- `FOUR_THREE`
-- `DOUBLE_OPEN_THREE`
-- `HALF_FOUR`
-- `OPEN_THREE`
-
 ### Cython 热点
 
-热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
+热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
 
 当前已下沉的热点包括：
 
@@ -260,7 +237,7 @@ gomoku-test/
 
 ## 固定题库
 
-固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
+固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
 
 - 一步杀
 - 必防冲四
@@ -379,25 +356,22 @@ ruff check .
 
 ## 可调参数
 
-配置文件在 [src/gomoku/config.py](/home/jerry/llm_code_learn/claude_ws/gomoku/gomoku-test/src/gomoku/config.py)。
+配置文件在 [src/gomoku/config.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/config.py)。
 
 ```python
 AI_SEARCH_DEPTH = 5
 AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 20
 AI_CANDIDATE_RANGE = 2
-AI_ROOT_RERANK_TOP_K = 8
 AI_VCF_ENABLED = True
 AI_VCF_MAX_DEPTH = 10
 AI_VCF_MAX_CANDIDATES = 16
-AI_QUIESCENCE_MAX_PLY = 8
-AI_QUIESCENCE_MAX_CANDIDATES = 3
 AI_MOVE_DELAY_MS = 10
 ```
 
 建议：
 
 - 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
-- 想要更强棋力：优先改搜索策略/威胁处理，其次再提高深度
+- 想要更强棋力：优先改搜索策略/评估/排序，其次再提高深度
 - 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
-- `AI_CANDIDATE_RANGE`、`AI_VCF_MAX_DEPTH`、quiescence 参数建议结合题库与对弈 benchmark 做 A/B 验证
+- `AI_CANDIDATE_RANGE`、`AI_VCF_MAX_DEPTH` 建议结合题库与对弈 benchmark 做 A/B 验证

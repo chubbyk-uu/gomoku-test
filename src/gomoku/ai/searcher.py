@@ -6,22 +6,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gomoku.ai.evaluator import DEFENSE_WEIGHT, evaluate
-from gomoku.ai.threats import (
-    ThreatType,
-    classify_attack_moves,
-    classify_defense_moves,
-    classify_moves,
-)
 from gomoku.ai.vcf import VCFSolver
 from gomoku.board import Board
 from gomoku.config import (
     AI_EVAL_CACHE_MAX_SIZE,
-    AI_INTERNAL_FORCING_ENABLED,
     AI_MAX_CANDIDATES,
-    AI_QUIESCENCE_MAX_CANDIDATES,
-    AI_QUIESCENCE_MAX_PLY,
-    AI_ROOT_RERANK_TOP_K,
-    AI_THREAT_EARLY_RETURN_ENABLED,
     AI_TT_MAX_SIZE,
     AI_VCF_ENABLED,
     AI_VCF_MAX_CANDIDATES,
@@ -45,15 +34,7 @@ except ImportError:  # pragma: no cover - exercised when extension is not built
 # flag: "E"=exact, "L"=lower bound (V >= score), "U"=upper bound (V <= score)
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
-_ORDERING_RERANK_TOP_K = 8
 _MoveAnalysis = tuple[bool, int]
-_FORCING_SEARCH_DEPTH = 4
-_FORCING_SEARCH_ENABLED = False
-_QUIESCENCE_THREATS: tuple[ThreatType, ...] = (
-    ThreatType.WIN,
-    ThreatType.OPEN_FOUR,
-    ThreatType.DOUBLE_HALF_FOUR,
-)
 
 
 @dataclass
@@ -68,7 +49,6 @@ class SearchStats:
     beta_cutoffs: int = 0
     alpha_cutoffs: int = 0
     immediate_wins: int = 0
-    forcing_wins: int = 0
     max_branching: int = 0
     completed_depth: int = 0
     timed_out: bool = False
@@ -83,7 +63,6 @@ class SearchStats:
         self.beta_cutoffs += other.beta_cutoffs
         self.alpha_cutoffs += other.alpha_cutoffs
         self.immediate_wins += other.immediate_wins
-        self.forcing_wins += other.forcing_wins
         self.max_branching = max(self.max_branching, other.max_branching)
         self.completed_depth = max(self.completed_depth, other.completed_depth)
         self.timed_out = self.timed_out or other.timed_out
@@ -126,7 +105,6 @@ class AISearcher:
         self._tt: dict[int, _TTEntry] = {}
         self._killers: dict[int, list[tuple[int, int]]] = {}
         self._eval_cache: dict[int, int] = {}
-        self._threat_cache: dict[tuple[int, int, str], list] = {}
         self._vcf = VCFSolver(max_candidates=AI_VCF_MAX_CANDIDATES)
         self.last_search_stats = SearchStats()
         self.last_decision_trace = DecisionTrace()
@@ -216,19 +194,6 @@ class AISearcher:
                 self._deadline = None
                 return vcf_block
 
-        if _FORCING_SEARCH_ENABLED:
-            forcing_move = self._find_forcing_move(board, self.ai_player)
-            if forcing_move is not None:
-                self.last_search_stats.forcing_wins = 1
-                self.last_search_stats.completed_depth = 1
-                self.last_decision_trace = DecisionTrace(
-                    source="forcing_search",
-                    move=forcing_move,
-                    completed_depth=1,
-                )
-                self._deadline = None
-                return forcing_move
-
         best_move: Optional[tuple[int, int]] = None
         best_score: Optional[float] = None
         for current_depth in range(1, self.depth + 1):
@@ -241,7 +206,6 @@ class AISearcher:
                     math.inf,
                     maximizing=True,
                     stats=iteration_stats,
-                    root_depth=current_depth,
                 )
             except SearchTimeout:
                 self.last_search_stats.timed_out = True
@@ -293,29 +257,6 @@ class AISearcher:
         """Raise when the configured time budget has been exhausted."""
         if self._deadline is not None and time.perf_counter() >= self._deadline:
             raise SearchTimeout
-
-    def _classify_moves_cached(
-        self,
-        board: Board,
-        moves: list[tuple[int, int]],
-        player: Player,
-        mode: str = "both",
-    ) -> list:
-        """Cache threat classification per board hash and side to avoid recomputation."""
-        key = (board.hash, int(player), mode)
-        cached = self._threat_cache.get(key)
-        if cached is not None:
-            return cached
-        if mode == "attack":
-            classified = classify_attack_moves(board, moves, player)
-        elif mode == "defense":
-            classified = classify_defense_moves(board, moves, player)
-        else:
-            classified = classify_moves(board, moves, player)
-        if len(self._threat_cache) >= AI_EVAL_CACHE_MAX_SIZE:
-            self._threat_cache.clear()
-        self._threat_cache[key] = classified
-        return classified
 
     @staticmethod
     def _line_tactical_score(length: int, open_ends: int) -> int:
@@ -423,451 +364,8 @@ class AISearcher:
             for row, col in moves
         }
 
-    def _score_ordering_move(
-        self,
-        board: Board,
-        row: int,
-        col: int,
-        current_player: Player,
-    ) -> tuple[int, int, int]:
-        """返回综合排序分，以及进攻/防守分量。"""
-        opponent = self.ai_player if current_player == self._opponent else self._opponent
-        _, attack_score = self._analyze_move_for_player(board, row, col, current_player)
-        _, defense_score = self._analyze_move_for_player(board, row, col, opponent)
-        return attack_score * 2 + defense_score * 3, attack_score, defense_score
-
-    @staticmethod
-    def _forcing_move_priority(threat_type: ThreatType) -> int:
-        if threat_type == ThreatType.WIN:
-            return 8
-        if threat_type == ThreatType.BLOCK_WIN:
-            return 7
-        if threat_type == ThreatType.OPEN_FOUR:
-            return 6
-        if threat_type == ThreatType.DOUBLE_HALF_FOUR:
-            return 5
-        if threat_type == ThreatType.FOUR_THREE:
-            return 4
-        if threat_type == ThreatType.DOUBLE_OPEN_THREE:
-            return 3
-        if threat_type == ThreatType.HALF_FOUR:
-            return 2
-        if threat_type == ThreatType.OPEN_THREE:
-            return 1
-        return 0
-
-    def _forcing_candidates(
-        self,
-        board: Board,
-        player: Player,
-        attacker: Player,
-    ) -> list[tuple[tuple[int, int], ThreatType]]:
-        """Return threat-ranked candidates for forcing search."""
-        mode = "attack" if player == attacker else "defense"
-        infos = self._classify_moves_cached(board, board.get_candidate_moves(), player, mode=mode)
-        if player == attacker:
-            allowed = {
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.HALF_FOUR,
-                ThreatType.DOUBLE_OPEN_THREE,
-                ThreatType.FOUR_THREE,
-                ThreatType.OPEN_THREE,
-            }
-            candidates = [
-                (info.move, info.attack_type) for info in infos if info.attack_type in allowed
-            ]
-        else:
-            allowed = {
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.HALF_FOUR,
-                ThreatType.DOUBLE_OPEN_THREE,
-                ThreatType.FOUR_THREE,
-                ThreatType.OPEN_THREE,
-            }
-            all_candidates = [
-                (info.move, info.defense_type) for info in infos if info.defense_type in allowed
-            ]
-            if not all_candidates:
-                return []
-            strongest = max(
-                self._forcing_move_priority(threat_type)
-                for _, threat_type in all_candidates
-            )
-            candidates = [
-                (move, threat_type)
-                for move, threat_type in all_candidates
-                if self._forcing_move_priority(threat_type) == strongest
-            ]
-        candidates.sort(
-            key=lambda item: (self._forcing_move_priority(item[1]), item[0][0], item[0][1]),
-            reverse=True,
-        )
-        return candidates
-
-    def _forcing_search(
-        self,
-        board: Board,
-        attacker: Player,
-        current_player: Player,
-        depth: int,
-    ) -> tuple[bool, Optional[tuple[int, int]]]:
-        """Search a short forcing line among high-priority threat moves only."""
-        self._check_timeout()
-        if depth <= 0:
-            return False, None
-
-        candidates = self._forcing_candidates(board, current_player, attacker)
-        if not candidates:
-            return (current_player != attacker), None
-
-        if current_player == attacker:
-            for move, threat_type in candidates:
-                if threat_type == ThreatType.WIN:
-                    return True, move
-                board.place(*move, current_player)
-                try:
-                    success, _ = self._forcing_search(
-                        board,
-                        attacker,
-                        self._opponent_of(current_player),
-                        depth - 1,
-                    )
-                finally:
-                    board.undo()
-                if success:
-                    return True, move
-            return False, None
-
-        for move, threat_type in candidates:
-            board.place(*move, current_player)
-            try:
-                success, _ = self._forcing_search(board, attacker, attacker, depth - 1)
-            finally:
-                board.undo()
-            if not success:
-                return False, None
-        return True, None
-
     def _opponent_of(self, player: Player) -> Player:
         return Player.WHITE if player == Player.BLACK else Player.BLACK
-
-    def _find_forcing_move(
-        self,
-        board: Board,
-        current_player: Player,
-    ) -> Optional[tuple[int, int]]:
-        """Try to prove a short forcing win from the current position."""
-        success, move = self._forcing_search(
-            board, current_player, current_player, _FORCING_SEARCH_DEPTH
-        )
-        return move if success else None
-
-    @staticmethod
-    def _dynamic_cutoff(
-        scored_moves: list[tuple[int, int, int, int, int]],
-        max_candidates: int,
-    ) -> int:
-        """按局面强度动态决定截断宽度。"""
-        if not scored_moves:
-            return 0
-
-        limit = min(len(scored_moves), max_candidates)
-        top_score = scored_moves[0][2]
-        if limit <= 4:
-            return limit
-
-        if top_score >= 150_000:
-            cutoff = 4
-        elif top_score >= 60_000:
-            cutoff = 6
-        elif top_score >= 12_000:
-            cutoff = 8
-        elif top_score >= 2_000:
-            cutoff = 10
-        else:
-            cutoff = limit
-
-        cutoff = min(cutoff, limit)
-        if cutoff >= limit:
-            return limit
-
-        gap = max(500, top_score // 5)
-        while cutoff < limit and top_score - scored_moves[cutoff][2] <= gap:
-            cutoff += 1
-        return cutoff
-
-    def _select_quiescence_moves(
-        self,
-        board: Board,
-        current_player: Player,
-        tt_move: Optional[tuple[int, int]],
-    ) -> list[tuple[int, int]]:
-        """Return only high-priority tactical moves for quiescence search."""
-        moves = board.get_candidate_moves()
-        if not moves:
-            return []
-
-        killer_moves = self._killers.get(0, [])
-
-        def _cap_quiescence_moves(candidates: list[tuple[int, int]]) -> list[tuple[int, int]]:
-            if AI_QUIESCENCE_MAX_CANDIDATES <= 0:
-                return []
-            if len(candidates) <= AI_QUIESCENCE_MAX_CANDIDATES:
-                return candidates
-            return candidates[:AI_QUIESCENCE_MAX_CANDIDATES]
-
-        current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
-        immediate_wins = [move for move, (is_win, _) in current_move_analysis.items() if is_win]
-        if immediate_wins:
-            immediate_wins.sort(key=lambda move: self._symmetry_move_key(board, move))
-            prioritized = self._prioritize_special_moves(immediate_wins, tt_move, killer_moves)
-            return _cap_quiescence_moves(prioritized)
-
-        opponent = self._opponent_of(current_player)
-        opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
-        blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
-        if blocking_moves:
-            blocking_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
-            prioritized = self._prioritize_special_moves(blocking_moves, tt_move, killer_moves)
-            return _cap_quiescence_moves(prioritized)
-
-        defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
-            threat_type: [] for threat_type in ThreatType
-        }
-        for info in self._classify_moves_cached(board, moves, current_player, mode="defense"):
-            defense_grouped[info.defense_type].append(info.move)
-
-        for threat_type in _QUIESCENCE_THREATS[1:]:
-            threat_moves = defense_grouped[threat_type]
-            if threat_moves:
-                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
-                prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
-                return _cap_quiescence_moves(prioritized)
-
-        attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
-            threat_type: [] for threat_type in ThreatType
-        }
-        for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
-            attack_grouped[info.attack_type].append(info.move)
-
-        for threat_type in _QUIESCENCE_THREATS[1:]:
-            threat_moves = attack_grouped[threat_type]
-            if threat_moves:
-                threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
-                prioritized = self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
-                return _cap_quiescence_moves(prioritized)
-
-        return []
-
-    def _quiescence(
-        self,
-        board: Board,
-        alpha: float,
-        beta: float,
-        maximizing: bool,
-        stats: SearchStats,
-        remaining_ply: int,
-    ) -> tuple[float, Optional[tuple[int, int]]]:
-        """Extend leaf nodes along forcing tactical moves until the position is quiet."""
-        self._check_timeout()
-        stats.leaf_evals += 1
-        stand_pat = self._evaluate(board)
-        if remaining_ply <= 0:
-            return stand_pat, None
-
-        current_player = self.ai_player if maximizing else self._opponent
-        tt_move = None
-        entry = self._tt.get(board.hash)
-        if entry is not None:
-            tt_move = entry[3]
-        moves = self._select_quiescence_moves(board, current_player, tt_move)
-        if not moves:
-            return stand_pat, None
-
-        best_move: Optional[tuple[int, int]] = None
-        if maximizing:
-            best_score = stand_pat
-            alpha = max(alpha, best_score)
-            if beta <= alpha:
-                return best_score, None
-            for row, col in moves:
-                self._check_timeout()
-                board.place(row, col, current_player)
-                try:
-                    score, _ = self._quiescence(
-                        board,
-                        alpha,
-                        beta,
-                        False,
-                        stats,
-                        remaining_ply - 1,
-                    )
-                finally:
-                    board.undo()
-                if score > best_score:
-                    best_score = score
-                    best_move = (row, col)
-                alpha = max(alpha, best_score)
-                if beta <= alpha:
-                    break
-            return best_score, best_move
-
-        best_score = stand_pat
-        beta = min(beta, best_score)
-        if beta <= alpha:
-            return best_score, None
-        for row, col in moves:
-            self._check_timeout()
-            board.place(row, col, current_player)
-            try:
-                score, _ = self._quiescence(
-                    board,
-                    alpha,
-                    beta,
-                    True,
-                    stats,
-                    remaining_ply - 1,
-                )
-            finally:
-                board.undo()
-            if score < best_score:
-                best_score = score
-                best_move = (row, col)
-            beta = min(beta, best_score)
-            if beta <= alpha:
-                break
-        return best_score, best_move
-
-    def _select_search_moves(
-        self,
-        board: Board,
-        moves: list[tuple[int, int]],
-        current_player: Player,
-        tt_move: Optional[tuple[int, int]],
-        stats: SearchStats,
-        depth: int = 0,
-        rerank_top_k: int = _ORDERING_RERANK_TOP_K,
-        current_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
-        opponent_move_analysis: Optional[dict[tuple[int, int], _MoveAnalysis]] = None,
-    ) -> list[tuple[int, int]]:
-        """分层生成候选点，并对普通局面执行动态截断。"""
-        killer_moves = self._killers.get(depth, [])
-        if AI_THREAT_EARLY_RETURN_ENABLED:
-            defense_grouped: dict[ThreatType, list[tuple[int, int]]] = {
-                threat_type: [] for threat_type in ThreatType
-            }
-            for info in self._classify_moves_cached(board, moves, current_player, mode="defense"):
-                defense_grouped[info.defense_type].append(info.move)
-
-            for threat_type in (
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.FOUR_THREE,
-                ThreatType.DOUBLE_OPEN_THREE,
-            ):
-                threat_moves = defense_grouped[threat_type]
-                if threat_moves:
-                    threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
-                    return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
-
-            attack_grouped: dict[ThreatType, list[tuple[int, int]]] = {
-                threat_type: [] for threat_type in ThreatType
-            }
-            for info in self._classify_moves_cached(board, moves, current_player, mode="attack"):
-                attack_grouped[info.attack_type].append(info.move)
-
-            for threat_type in (
-                ThreatType.WIN,
-                ThreatType.OPEN_FOUR,
-                ThreatType.DOUBLE_HALF_FOUR,
-                ThreatType.FOUR_THREE,
-                ThreatType.DOUBLE_OPEN_THREE,
-            ):
-                threat_moves = attack_grouped[threat_type]
-                if threat_moves:
-                    threat_moves.sort(key=lambda move: self._symmetry_move_key(board, move))
-                    return self._prioritize_special_moves(threat_moves, tt_move, killer_moves)
-
-        opponent = self.ai_player if current_player == self._opponent else self._opponent
-        if opponent_move_analysis is None:
-            opponent_move_analysis = self._analyze_moves_for_player(board, moves, opponent)
-        blocking_moves = [move for move, (is_win, _) in opponent_move_analysis.items() if is_win]
-        if blocking_moves:
-            ordered_blocks = sorted(
-                blocking_moves,
-                key=lambda move: self._symmetry_move_key(board, move),
-            )
-            return self._prioritize_special_moves(ordered_blocks, tt_move, killer_moves)
-
-        if current_move_analysis is None:
-            current_move_analysis = self._analyze_moves_for_player(board, moves, current_player)
-
-        scored_moves: list[tuple[int, int, int, int, int]] = []
-        for r, c in moves:
-            self._check_timeout()
-            stats.ordering_evals += 1
-            _, defense_score = opponent_move_analysis[(r, c)]
-            is_attacking_win, attack_score = current_move_analysis[(r, c)]
-            if is_attacking_win:
-                attack_score = 200_000
-            total_score = attack_score * 2 + defense_score * 3
-            scored_moves.append((r, c, total_score, attack_score, defense_score))
-
-        scored_moves.sort(
-            key=lambda x: (
-                -x[2],
-                -x[3],
-                -x[4],
-                *self._symmetry_move_key(board, (x[0], x[1])),
-            )
-        )
-
-        cutoff = self._dynamic_cutoff(scored_moves, AI_MAX_CANDIDATES)
-        selected_moves = scored_moves[:cutoff]
-        rerank_limit = min(len(selected_moves), rerank_top_k)
-        reranked = self._rerank_top_moves(
-            board, selected_moves, rerank_limit, current_player, stats
-        )
-        return self._prioritize_special_moves(
-            [(r, c) for r, c, _, _, _ in reranked], tt_move, killer_moves
-        )
-
-    def _rerank_top_moves(
-        self,
-        board: Board,
-        scored_moves: list[tuple[int, int, int, int, int]],
-        rerank_limit: int,
-        current_player: Player,
-        stats: SearchStats,
-    ) -> list[tuple[int, int, int, int, int]]:
-        """对粗排前若干候选做完整局面评估，提升排序质量。"""
-        if rerank_limit <= 1:
-            return scored_moves
-
-        reranked_prefix: list[tuple[int, int, int, int, int]] = []
-        for row, col, coarse_score, attack_score, defense_score in scored_moves[:rerank_limit]:
-            self._check_timeout()
-            board.place(row, col, current_player)
-            try:
-                exact_score = self._evaluate(board)
-            finally:
-                board.undo()
-            reranked_prefix.append((row, col, exact_score, attack_score, defense_score))
-
-        reranked_prefix.sort(
-            key=lambda x: (
-                -x[2],
-                -x[3],
-                -x[4],
-                *self._symmetry_move_key(board, (x[0], x[1])),
-            )
-        )
-        return reranked_prefix + scored_moves[rerank_limit:]
 
     def _symmetry_move_key(self, board: Board, move: tuple[int, int]) -> tuple[int, int, int, int]:
         """Return a tie-break key that avoids absolute row/col direction bias."""
@@ -1047,7 +545,6 @@ class AISearcher:
         beta: float,
         maximizing: bool,
         stats: SearchStats,
-        root_depth: int,
     ) -> tuple[float, Optional[tuple[int, int]]]:
         """Minimax 递归搜索（Alpha-Beta 剪枝 + 置换表）。"""
         self._check_timeout()
@@ -1096,7 +593,7 @@ class AISearcher:
                     if board.check_win(row, col):
                         score = 100_000.0
                     else:
-                        score, _ = self._minimax(board, depth - 1, alpha, beta, False, stats, root_depth)
+                        score, _ = self._minimax(board, depth - 1, alpha, beta, False, stats)
                 finally:
                     board.undo()
 
@@ -1123,7 +620,7 @@ class AISearcher:
                 if board.check_win(row, col):
                     score = -100_000.0
                 else:
-                    score, _ = self._minimax(board, depth - 1, alpha, beta, True, stats, root_depth)
+                    score, _ = self._minimax(board, depth - 1, alpha, beta, True, stats)
             finally:
                 board.undo()
 

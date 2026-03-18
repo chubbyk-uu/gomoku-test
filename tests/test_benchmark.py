@@ -195,7 +195,7 @@ def test_run_puzzle_benchmark_cli_defaults_to_even_depth(monkeypatch, capsys):
         forbidden_moves = set()
         move = (7, 7)
         elapsed_s = 0.0
-        stats = type("Stats", (), {"nodes": 1, "forcing_wins": 0})()
+        stats = type("Stats", (), {"nodes": 1})()
 
     monkeypatch.setattr(module, "AISearcher", DummySearcher)
     monkeypatch.setattr(module, "default_puzzle_cases", lambda: [])
