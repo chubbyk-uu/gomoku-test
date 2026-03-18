@@ -63,6 +63,68 @@ def test_find_best_move_on_empty_board():
     assert move == (7, 7)
 
 
+def test_candidate_moves_match_radius_one_row_major():
+    board = Board()
+    board.place(5, 5, Player.BLACK)
+
+    assert AISearcher._candidate_moves_python(board) == [
+        (4, 4),
+        (4, 5),
+        (4, 6),
+        (5, 4),
+        (5, 6),
+        (6, 4),
+        (6, 5),
+        (6, 6),
+    ]
+
+
+def test_candidate_moves_native_matches_python_reference():
+    board = Board()
+    board.place(5, 5, Player.BLACK)
+    board.place(7, 7, Player.WHITE)
+
+    expected = AISearcher._candidate_moves_python(board)
+    actual = AISearcher._candidate_moves(board)
+
+    assert actual == expected
+
+
+def test_candidate_moves_falls_back_to_python_when_native_unavailable(monkeypatch):
+    board = Board()
+    board.place(5, 5, Player.BLACK)
+
+    monkeypatch.setattr(searcher_module, "_candidate_moves_radius1_native", None)
+
+    assert AISearcher._candidate_moves(board) == AISearcher._candidate_moves_python(board)
+
+
+def test_local_hotness_native_matches_python_reference():
+    board = Board()
+    board.place(5, 5, Player.BLACK)
+    board.place(7, 7, Player.WHITE)
+    board.place(6, 8, Player.BLACK)
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
+
+    expected = searcher._local_hotness_python(board, 6, 6, Player.WHITE)
+    actual = searcher._local_hotness(board, 6, 6, Player.WHITE)
+
+    assert actual == expected
+
+
+def test_local_hotness_falls_back_to_python_when_native_unavailable(monkeypatch):
+    board = Board()
+    board.place(5, 5, Player.BLACK)
+    board.place(7, 7, Player.WHITE)
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
+
+    monkeypatch.setattr(searcher_module, "_local_hotness_native", None)
+
+    assert searcher._local_hotness(board, 6, 6, Player.BLACK) == searcher._local_hotness_python(
+        board, 6, 6, Player.BLACK
+    )
+
+
 def test_find_best_move_does_not_modify_board():
     """find_best_move 不应改变传入棋盘的状态。"""
     board = Board()
@@ -362,6 +424,7 @@ def test_select_search_moves_prioritizes_open_four(monkeypatch):
     board = Board()
     searcher = _make_searcher(ai_player=Player.BLACK)
     candidate_moves = [(7, 7), (7, 8), (8, 8)]
+    monkeypatch.setattr(searcher_module, "AI_THREAT_EARLY_RETURN_ENABLED", True)
 
     def fake_classify(_board, _moves, _player, mode="both"):
         if mode == "attack":
@@ -401,6 +464,7 @@ def test_select_search_moves_prioritizes_four_three(monkeypatch):
     board = Board()
     searcher = _make_searcher(ai_player=Player.BLACK)
     candidate_moves = [(7, 7), (7, 8), (8, 8)]
+    monkeypatch.setattr(searcher_module, "AI_THREAT_EARLY_RETURN_ENABLED", True)
 
     def fake_classify(_board, _moves, _player, mode="both"):
         if mode == "attack":
@@ -440,6 +504,7 @@ def test_select_search_moves_prioritizes_double_open_three(monkeypatch):
     board = Board()
     searcher = _make_searcher(ai_player=Player.BLACK)
     candidate_moves = [(7, 7), (7, 8), (8, 8)]
+    monkeypatch.setattr(searcher_module, "AI_THREAT_EARLY_RETURN_ENABLED", True)
 
     def fake_classify(_board, _moves, _player, mode="both"):
         if mode == "attack":
@@ -514,6 +579,7 @@ def test_rerank_top_moves_uses_full_evaluation_for_prefix(monkeypatch):
     )
 
     assert [move[:2] for move in reranked] == [(7, 8), (8, 7), (7, 7)]
+
 
 
 def test_rerank_top_moves_keeps_suffix_order():
@@ -777,7 +843,7 @@ def test_time_limit_returns_last_completed_iteration(monkeypatch):
 
     def fake_perf_counter() -> float:
         counter["calls"] += 1
-        return 0.0 if counter["calls"] <= 40 else 1.0
+        return 0.0 if counter["calls"] <= 25 else 1.0
 
     monkeypatch.setattr(searcher_module.time, "perf_counter", fake_perf_counter)
 

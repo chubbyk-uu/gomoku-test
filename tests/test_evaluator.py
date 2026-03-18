@@ -1,7 +1,6 @@
 """Tests for pattern-based Evaluator."""
 
 import random
-
 from gomoku.ai.evaluator import (
     Shape,
     _count_shapes,

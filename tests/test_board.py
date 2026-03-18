@@ -110,6 +110,24 @@ def test_check_win_empty_cell():
     assert board.check_win(7, 7) is False
 
 
+def test_check_win_native_matches_python_reference():
+    board = Board()
+    for col in range(3, 8):
+        board.place(7, col, Player.BLACK)
+
+    assert board.check_win(7, 5) == board._check_win_python(7, 5)
+
+
+def test_check_win_falls_back_to_python_when_native_unavailable(monkeypatch):
+    board = Board()
+    for row in range(5):
+        board.place(row, 0, Player.WHITE)
+
+    monkeypatch.setattr("gomoku.board._check_win_native", None)
+
+    assert board.check_win(4, 0) == board._check_win_python(4, 0)
+
+
 # ---------------------------------------------------------------------------
 # get_candidate_moves
 # ---------------------------------------------------------------------------

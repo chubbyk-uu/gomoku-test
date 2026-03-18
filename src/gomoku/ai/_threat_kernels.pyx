@@ -280,6 +280,184 @@ cpdef list analyze_moves(
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
+cpdef list candidate_moves_radius1(cnp.ndarray[grid_t, ndim=2] grid):
+    """Return row-major empty cells within Chebyshev distance 1 of any stone."""
+    cdef list moves = []
+    cdef int board_size = grid.shape[0]
+    cdef int center = board_size // 2
+    cdef int row
+    cdef int col
+    cdef int nr
+    cdef int nc
+    cdef int dr
+    cdef int dc
+    cdef bint found
+    cdef bint has_stone = False
+
+    for row in range(board_size):
+        for col in range(board_size):
+            if grid[row, col] != 0:
+                has_stone = True
+                break
+        if has_stone:
+            break
+    if not has_stone:
+        return [(center, center)]
+
+    for row in range(board_size):
+        for col in range(board_size):
+            if grid[row, col] != 0:
+                continue
+            found = False
+            for dr in range(-1, 2):
+                for dc in range(-1, 2):
+                    nr = row + dr
+                    nc = col + dc
+                    if 0 <= nr < board_size and 0 <= nc < board_size and grid[nr, nc] != 0:
+                        found = True
+                        break
+                if found:
+                    break
+            if found:
+                moves.append((row, col))
+    return moves
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef inline int _count_one_side_impl(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int row,
+    int col,
+    int dr,
+    int dc,
+    int player,
+    int* length_out,
+    int* open_out,
+):
+    cdef int board_size = grid.shape[0]
+    cdef int length = 0
+    cdef int r = row + dr
+    cdef int c = col + dc
+
+    while 0 <= r < board_size and 0 <= c < board_size and grid[r, c] == player:
+        length += 1
+        r += dr
+        c += dc
+
+    length_out[0] = length
+    open_out[0] = 1 if (0 <= r < board_size and 0 <= c < board_size and grid[r, c] == 0) else 0
+    return 0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef int local_hotness(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int row,
+    int col,
+    int player,
+):
+    """Return the local ordering hotness used by the current search pipeline."""
+    cdef int score = 0
+    cdef int left_len
+    cdef int right_len
+    cdef int left_open
+    cdef int right_open
+    cdef int total_len
+    cdef int open_ends
+    cdef int dr_values[4]
+    cdef int dc_values[4]
+    cdef int i
+
+    dr_values[0], dc_values[0] = 1, 0
+    dr_values[1], dc_values[1] = 0, 1
+    dr_values[2], dc_values[2] = 1, 1
+    dr_values[3], dc_values[3] = 1, -1
+
+    if grid[row, col] != 0:
+        return 0
+
+    for i in range(4):
+        _count_one_side_impl(
+            grid,
+            row,
+            col,
+            -dr_values[i],
+            -dc_values[i],
+            player,
+            &left_len,
+            &left_open,
+        )
+        _count_one_side_impl(
+            grid,
+            row,
+            col,
+            dr_values[i],
+            dc_values[i],
+            player,
+            &right_len,
+            &right_open,
+        )
+        total_len = 1 + left_len + right_len
+        open_ends = left_open + right_open
+        score += _line_tactical_score(total_len, open_ends)
+    return score
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef bint check_win(
+    cnp.ndarray[grid_t, ndim=2] grid,
+    int row,
+    int col,
+):
+    """Return whether the stone at (row, col) forms five in a row."""
+    cdef int board_size = grid.shape[0]
+    cdef int player = grid[row, col]
+    cdef int dr_values[4]
+    cdef int dc_values[4]
+    cdef int i
+    cdef int dr
+    cdef int dc
+    cdef int r
+    cdef int c
+    cdef int length
+
+    if player == 0:
+        return False
+
+    dr_values[0], dc_values[0] = 0, 1
+    dr_values[1], dc_values[1] = 1, 0
+    dr_values[2], dc_values[2] = 1, 1
+    dr_values[3], dc_values[3] = 1, -1
+
+    for i in range(4):
+        dr = dr_values[i]
+        dc = dc_values[i]
+        length = 1
+
+        r = row + dr
+        c = col + dc
+        while 0 <= r < board_size and 0 <= c < board_size and grid[r, c] == player:
+            length += 1
+            r += dr
+            c += dc
+
+        r = row - dr
+        c = col - dc
+        while 0 <= r < board_size and 0 <= c < board_size and grid[r, c] == player:
+            length += 1
+            r -= dr
+            c -= dc
+
+        if length >= 5:
+            return True
+    return False
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
 cpdef list vcf_move_probes(
     cnp.ndarray[grid_t, ndim=2] grid,
     object moves,

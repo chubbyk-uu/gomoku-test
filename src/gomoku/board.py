@@ -7,6 +7,11 @@ import numpy as np
 
 from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, Player
 
+try:
+    from gomoku.ai._threat_kernels import check_win as _check_win_native
+except ImportError:  # pragma: no cover - exercised when extension is not built
+    _check_win_native = None
+
 _CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
     (dr, dc)
     for dr in range(-AI_CANDIDATE_RANGE, AI_CANDIDATE_RANGE + 1)
@@ -131,6 +136,12 @@ class Board:
         Returns:
             True 表示该位置构成胜利；空位返回 False。
         """
+        if _check_win_native is not None:
+            return bool(_check_win_native(self.grid, row, col))
+        return self._check_win_python(row, col)
+
+    def _check_win_python(self, row: int, col: int) -> bool:
+        """Pure Python baseline for five-in-a-row detection."""
         player_val = int(self.grid[row, col])
         if player_val == Player.NONE:
             return False
