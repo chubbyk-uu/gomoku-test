@@ -36,6 +36,13 @@ _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _MoveAnalysis = tuple[bool, int]
 _NONE = int(Player.NONE)
+_FORCED_SCORE = 100_000.0
+_WHITE_ROOT_RERANK_MAX_PLY = 9
+_WHITE_ROOT_RERANK_TOP_K = 6
+_WHITE_ROOT_RERANK_REPLY_TOP_K = 3
+_WHITE_ROOT_RERANK_STABILIZER_TOP_K = 3
+_WHITE_ROOT_RERANK_LAMBDA_MAX = 0.8
+_WHITE_ROOT_RERANK_LAMBDA_AVG = 0.2
 
 
 @dataclass
@@ -160,6 +167,171 @@ class AISearcher:
             for hotness, row, col, attack_score, defense_score in ranked[:limit]
         ]
 
+    def _should_apply_white_root_rerank(self, board: Board) -> bool:
+        return (
+            self.ai_player == Player.WHITE
+            and len(board.move_history) <= _WHITE_ROOT_RERANK_MAX_PLY
+        )
+
+    def _probe_black_reply_score(
+        self,
+        board: Board,
+        white_move: tuple[int, int],
+    ) -> dict[str, object]:
+        board.place(white_move[0], white_move[1], self.ai_player)
+        try:
+            reply_moves = self._candidate_moves(board)
+            if not reply_moves:
+                return {
+                    "max_reply_score": 0.0,
+                    "reply_candidates": [],
+                }
+
+            immediate_black_wins = self._find_immediate_winning_moves(
+                board, reply_moves, self._opponent
+            )
+            if immediate_black_wins:
+                replies = [
+                    self._trace_move_dict(move, score=_FORCED_SCORE, tag="black_immediate_win")
+                    for move in immediate_black_wins[:_WHITE_ROOT_RERANK_REPLY_TOP_K]
+                ]
+                return {
+                    "max_reply_score": _FORCED_SCORE,
+                    "reply_candidates": replies,
+                }
+
+            ordering_stats = SearchStats()
+            ordered_replies = self._order_moves(
+                board,
+                reply_moves,
+                self._opponent,
+                1,
+                None,
+                ordering_stats,
+            )[:_WHITE_ROOT_RERANK_REPLY_TOP_K]
+
+            reply_candidates: list[dict[str, object]] = []
+            max_reply_score = -math.inf
+            total_reply_score = 0.0
+            for reply in ordered_replies:
+                attack_score = self._local_hotness(board, reply[0], reply[1], self._opponent)
+                defense_score = self._local_hotness(board, reply[0], reply[1], self.ai_player)
+                board.place(reply[0], reply[1], self._opponent)
+                try:
+                    if board.check_win(reply[0], reply[1]):
+                        reply_score = _FORCED_SCORE
+                        stabilizer_candidates: list[dict[str, object]] = []
+                    else:
+                        stabilizer_moves = self._candidate_moves(board)
+                        if not stabilizer_moves:
+                            reply_score = float(-self._evaluate(board))
+                            stabilizer_candidates = []
+                        else:
+                            ordering_stats = SearchStats()
+                            ordered_stabilizers = self._order_moves(
+                                board,
+                                stabilizer_moves,
+                                self.ai_player,
+                                1,
+                                None,
+                                ordering_stats,
+                            )[:_WHITE_ROOT_RERANK_STABILIZER_TOP_K]
+                            best_white_reply_eval = -math.inf
+                            stabilizer_candidates = []
+                            for stabilizer in ordered_stabilizers:
+                                board.place(stabilizer[0], stabilizer[1], self.ai_player)
+                                try:
+                                    if board.check_win(stabilizer[0], stabilizer[1]):
+                                        white_reply_eval = _FORCED_SCORE
+                                    else:
+                                        white_reply_eval = float(self._evaluate(board))
+                                finally:
+                                    board.undo()
+                                best_white_reply_eval = max(best_white_reply_eval, white_reply_eval)
+                                stabilizer_candidates.append(
+                                    self._trace_move_dict(stabilizer, score=white_reply_eval)
+                                )
+                            if best_white_reply_eval == -math.inf:
+                                best_white_reply_eval = float(self._evaluate(board))
+                            # Convert back to black's perspective after white's best stabilizing reply.
+                            reply_score = -best_white_reply_eval
+                finally:
+                    board.undo()
+
+                max_reply_score = max(max_reply_score, reply_score)
+                total_reply_score += reply_score
+                reply_candidates.append(
+                    self._trace_move_dict(
+                        reply,
+                        score=reply_score,
+                        attack_score=attack_score,
+                        defense_score=defense_score,
+                        tag="black_reply_probe",
+                    )
+                )
+                if stabilizer_candidates:
+                    reply_candidates[-1]["stabilizer_candidates"] = stabilizer_candidates
+
+            if max_reply_score == -math.inf:
+                max_reply_score = 0.0
+            avg_reply_score = total_reply_score / len(reply_candidates) if reply_candidates else 0.0
+
+            return {
+                "max_reply_score": max_reply_score,
+                "avg_reply_score": avg_reply_score,
+                "reply_candidates": reply_candidates,
+            }
+        finally:
+            board.undo()
+
+    def _rerank_white_root_candidates(
+        self,
+        board: Board,
+        root_candidates: list[dict[str, object]],
+    ) -> tuple[Optional[tuple[int, int]], Optional[float], list[dict[str, object]]]:
+        ranked = [dict(candidate) for candidate in root_candidates]
+        top = ranked[:_WHITE_ROOT_RERANK_TOP_K]
+        for idx, candidate in enumerate(top, start=1):
+            move_data = candidate.get("move")
+            if not isinstance(move_data, list) or len(move_data) != 2:
+                continue
+            move = (int(move_data[0]), int(move_data[1]))
+            base_score = float(candidate.get("score", -math.inf))
+            probe = self._probe_black_reply_score(board, move)
+            max_reply_score = float(probe["max_reply_score"])
+            avg_reply_score = float(probe.get("avg_reply_score", max_reply_score))
+            rerank_score = (
+                base_score
+                - _WHITE_ROOT_RERANK_LAMBDA_MAX * max_reply_score
+                - _WHITE_ROOT_RERANK_LAMBDA_AVG * avg_reply_score
+            )
+            candidate["base_score"] = base_score
+            candidate["max_reply_score"] = max_reply_score
+            candidate["avg_reply_score"] = avg_reply_score
+            candidate["rerank_score"] = rerank_score
+            candidate["reply_candidates"] = probe["reply_candidates"]
+            candidate["base_rank"] = idx
+
+        top.sort(
+            key=lambda item: (
+                -float(item.get("rerank_score", item.get("score", -math.inf))),
+                -float(item.get("score", -math.inf)),
+                item["move"][0],
+                item["move"][1],
+            )
+        )
+        for idx, candidate in enumerate(top, start=1):
+            candidate["rerank_rank"] = idx
+        ranked[: len(top)] = top
+
+        if not ranked:
+            return None, None, ranked
+        best = ranked[0]
+        move = best.get("move")
+        if not isinstance(move, list) or len(move) != 2:
+            return None, None, ranked
+        return (int(move[0]), int(move[1])), float(best.get("score", -math.inf)), ranked
+
     def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
         """为 AI 找出当前局面下的最优落子位置。
 
@@ -280,7 +452,24 @@ class AISearcher:
             best_score = score
             best_root_candidates = root_candidates
 
-            if abs(score) >= 100_000.0:
+            root_candidates.sort(
+                key=lambda item: (-float(item.get("score", -math.inf)), item["move"][0], item["move"][1])
+            )
+            if self._should_apply_white_root_rerank(board) and root_candidates:
+                reranked_move, reranked_score, reranked_candidates = self._rerank_white_root_candidates(
+                    board, root_candidates
+                )
+                if reranked_move is not None and reranked_score is not None:
+                    move = reranked_move
+                    score = reranked_score
+                    root_candidates = reranked_candidates
+
+            if move is not None:
+                best_move = move
+            best_score = score
+            best_root_candidates = root_candidates
+
+            if abs(score) >= _FORCED_SCORE:
                 break
 
             if self._deadline is not None and time.perf_counter() >= self._deadline:
@@ -293,6 +482,18 @@ class AISearcher:
         self.last_decision_trace.completed_depth = self.last_search_stats.completed_depth
         self.last_decision_trace.score = best_score
         self.last_decision_trace.root_candidates = best_root_candidates
+        if (
+            self._should_apply_white_root_rerank(board)
+            and best_root_candidates
+            and "rerank_score" in best_root_candidates[0]
+        ):
+            self.last_decision_trace.notes = [
+                f"white_root_rerank_lambda_max={_WHITE_ROOT_RERANK_LAMBDA_MAX}",
+                f"white_root_rerank_lambda_avg={_WHITE_ROOT_RERANK_LAMBDA_AVG}",
+                f"white_root_rerank_top_k={_WHITE_ROOT_RERANK_TOP_K}",
+                f"white_root_rerank_reply_top_k={_WHITE_ROOT_RERANK_REPLY_TOP_K}",
+                f"white_root_rerank_stabilizer_top_k={_WHITE_ROOT_RERANK_STABILIZER_TOP_K}",
+            ]
         return best_move
 
     def _evaluate(self, board: Board) -> int:

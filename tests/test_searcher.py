@@ -137,6 +137,60 @@ def test_find_best_move_does_not_modify_board():
     assert board.grid[7][7] == Player.BLACK
 
 
+def test_white_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
+    board = Board()
+    board.place(5, 6, Player.BLACK)
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
+
+    def fake_minimax(self, board, depth, alpha, beta, maximizing, stats, root_trace=None):
+        candidates = [(4, 5), (4, 6), (4, 7)]
+        if root_trace is not None:
+            for move in candidates:
+                root_trace.append({"move": [move[0], move[1]], "score": 94})
+        return 94, candidates[0]
+
+    def fake_probe(self, board, white_move):
+        scores = {
+            (4, 5): 100.0,
+            (4, 6): 10.0,
+            (4, 7): 50.0,
+        }
+        return {"max_reply_score": scores[white_move], "reply_candidates": []}
+
+    monkeypatch.setattr(AISearcher, "_minimax", fake_minimax)
+    monkeypatch.setattr(AISearcher, "_probe_black_reply_score", fake_probe)
+
+    move = searcher.find_best_move(board)
+
+    assert move == (4, 6)
+    assert searcher.last_decision_trace.root_candidates[0]["move"] == [4, 6]
+    assert "rerank_score" in searcher.last_decision_trace.root_candidates[0]
+
+
+def test_black_root_rerank_does_not_apply(monkeypatch):
+    board = Board()
+    board.place(5, 6, Player.BLACK)
+    board.place(4, 5, Player.WHITE)
+    searcher = _make_searcher(ai_player=Player.BLACK, depth=1)
+
+    def fake_minimax(self, board, depth, alpha, beta, maximizing, stats, root_trace=None):
+        candidates = [(3, 6), (5, 5)]
+        if root_trace is not None:
+            for move in candidates:
+                root_trace.append({"move": [move[0], move[1]], "score": 100})
+        return 100, candidates[0]
+
+    def fail_probe(self, board, white_move):
+        raise AssertionError("black should not use white root rerank")
+
+    monkeypatch.setattr(AISearcher, "_minimax", fake_minimax)
+    monkeypatch.setattr(AISearcher, "_probe_black_reply_score", fail_probe)
+
+    move = searcher.find_best_move(board)
+
+    assert move == (3, 6)
+
+
 def test_ai_as_black_wins_when_possible():
     """AI 执黑时，有五连机会应该直接赢。"""
     board = Board()
