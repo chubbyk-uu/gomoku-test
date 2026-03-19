@@ -32,6 +32,10 @@ class GroupSpec:
     depth_b: int
     a_color: str
 
+    @property
+    def group_key(self) -> str:
+        return f"d{self.depth_a}_a_{self.a_color.lower()}"
+
 
 def _fixed_openings() -> list[tuple[int, int]]:
     center = BOARD_SIZE // 2
@@ -135,6 +139,24 @@ def main() -> None:
     )
     parser.add_argument("--max-moves", type=int, default=120)
     parser.add_argument(
+        "--group",
+        choices=("d5_a_white", "d5_a_black", "d4_a_white", "d4_a_black"),
+        default=None,
+        help="Optional single-group run instead of the default 100-game matrix",
+    )
+    parser.add_argument(
+        "--opening-start",
+        type=int,
+        default=0,
+        help="Inclusive opening index start for sliced runs",
+    )
+    parser.add_argument(
+        "--opening-count",
+        type=int,
+        default=None,
+        help="Optional number of openings to run from opening-start",
+    )
+    parser.add_argument(
         "--limit-games",
         type=int,
         default=None,
@@ -145,12 +167,16 @@ def main() -> None:
     repo_a = str(Path.cwd().resolve())
     repo_b = str(args.repo_b.resolve())
     openings = _fixed_openings()
+    opening_end = None if args.opening_count is None else args.opening_start + args.opening_count
+    openings = openings[args.opening_start:opening_end]
     groups = [
         GroupSpec(depth_a=5, depth_b=5, a_color="WHITE"),
         GroupSpec(depth_a=5, depth_b=5, a_color="BLACK"),
         GroupSpec(depth_a=4, depth_b=4, a_color="WHITE"),
         GroupSpec(depth_a=4, depth_b=4, a_color="BLACK"),
     ]
+    if args.group is not None:
+        groups = [group for group in groups if group.group_key == args.group]
 
     payload: dict = {
         "repo_a": repo_a,
@@ -162,7 +188,7 @@ def main() -> None:
 
     game_index = 0
     for group in groups:
-        group_key = f"d{group.depth_a}_a_{group.a_color.lower()}"
+        group_key = group.group_key
         group_summary = {
             "group_key": group_key,
             "depth_a": group.depth_a,

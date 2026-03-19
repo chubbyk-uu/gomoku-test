@@ -77,7 +77,7 @@ class DecisionTrace:
     move: Optional[tuple[int, int]] = None
     completed_depth: int = 0
     score: Optional[float] = None
-    root_candidates: list[tuple[int, int]] | None = None
+    root_candidates: list[dict[str, object]] | None = None
     notes: list[str] | None = None
 
 
@@ -110,6 +110,55 @@ class AISearcher:
         self.last_search_stats = SearchStats()
         self.last_decision_trace = DecisionTrace()
         self._deadline: Optional[float] = None
+
+    @staticmethod
+    def _trace_move_dict(
+        move: tuple[int, int],
+        *,
+        score: float | int | None = None,
+        attack_score: int | None = None,
+        defense_score: int | None = None,
+        hotness: float | int | None = None,
+        tag: str | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {"move": [move[0], move[1]]}
+        if score is not None:
+            payload["score"] = score
+        if attack_score is not None:
+            payload["attack_score"] = attack_score
+        if defense_score is not None:
+            payload["defense_score"] = defense_score
+        if hotness is not None:
+            payload["hotness"] = hotness
+        if tag is not None:
+            payload["tag"] = tag
+        return payload
+
+    def _root_hotness_snapshot(
+        self,
+        board: Board,
+        current_player: Player,
+        *,
+        limit: int = AI_MAX_CANDIDATES,
+    ) -> list[dict[str, object]]:
+        moves = self._candidate_moves(board)
+        ranked: list[tuple[float, int, int, int, int]] = []
+        opponent = self._opponent_of(current_player)
+        for row, col in moves:
+            attack_score = self._local_hotness(board, row, col, current_player)
+            defense_score = self._local_hotness(board, row, col, opponent)
+            hotness = attack_score + defense_score * DEFENSE_WEIGHT
+            ranked.append((hotness, row, col, attack_score, defense_score))
+        ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+        return [
+            self._trace_move_dict(
+                (row, col),
+                attack_score=attack_score,
+                defense_score=defense_score,
+                hotness=hotness,
+            )
+            for hotness, row, col, attack_score, defense_score in ranked[:limit]
+        ]
 
     def find_best_move(self, board: Board) -> Optional[tuple[int, int]]:
         """为 AI 找出当前局面下的最优落子位置。
@@ -147,7 +196,10 @@ class AISearcher:
                 source="immediate_win",
                 move=immediate_wins[0],
                 completed_depth=1,
-                root_candidates=immediate_wins,
+                root_candidates=[
+                    self._trace_move_dict(move, score=100_000, tag="immediate_win")
+                    for move in immediate_wins
+                ],
             )
             self._deadline = None
             return immediate_wins[0]
@@ -159,7 +211,11 @@ class AISearcher:
                 source="immediate_block",
                 move=opponent_immediate_wins[0],
                 completed_depth=1,
-                root_candidates=opponent_immediate_wins,
+                root_candidates=[
+                    self._trace_move_dict(move, score=100_000, tag="opponent_immediate_win")
+                    for move in opponent_immediate_wins
+                ],
+                notes=["blocked_opponent_immediate_win"],
             )
             self._deadline = None
             return opponent_immediate_wins[0]
@@ -173,6 +229,7 @@ class AISearcher:
                     source="vcf_win",
                     move=vcf_move,
                     completed_depth=AI_VCF_MAX_DEPTH,
+                    root_candidates=self._root_hotness_snapshot(board, self.ai_player),
                     notes=[
                         f"vcf_nodes={self._vcf.last_stats.nodes}",
                         f"vcf_cache_hits={self._vcf.last_stats.cache_hits}",
@@ -187,7 +244,9 @@ class AISearcher:
                     source="vcf_block",
                     move=vcf_block,
                     completed_depth=AI_VCF_MAX_DEPTH,
+                    root_candidates=self._root_hotness_snapshot(board, self.ai_player),
                     notes=[
+                        "blocked_opponent_vcf",
                         f"vcf_nodes={self._vcf.last_stats.nodes}",
                         f"vcf_cache_hits={self._vcf.last_stats.cache_hits}",
                     ],
@@ -197,8 +256,10 @@ class AISearcher:
 
         best_move: Optional[tuple[int, int]] = None
         best_score: Optional[float] = None
+        best_root_candidates: list[dict[str, object]] | None = None
         for current_depth in range(1, self.depth + 1):
             iteration_stats = SearchStats()
+            root_candidates: list[dict[str, object]] = []
             try:
                 score, move = self._minimax(
                     board,
@@ -207,6 +268,7 @@ class AISearcher:
                     math.inf,
                     maximizing=True,
                     stats=iteration_stats,
+                    root_trace=root_candidates,
                 )
             except SearchTimeout:
                 self.last_search_stats.timed_out = True
@@ -216,6 +278,7 @@ class AISearcher:
             self.last_search_stats.merge(iteration_stats)
             best_move = move
             best_score = score
+            best_root_candidates = root_candidates
 
             if abs(score) >= 100_000.0:
                 break
@@ -229,6 +292,7 @@ class AISearcher:
         self.last_decision_trace.move = best_move
         self.last_decision_trace.completed_depth = self.last_search_stats.completed_depth
         self.last_decision_trace.score = best_score
+        self.last_decision_trace.root_candidates = best_root_candidates
         return best_move
 
     def _evaluate(self, board: Board) -> int:
@@ -546,6 +610,7 @@ class AISearcher:
         beta: float,
         maximizing: bool,
         stats: SearchStats,
+        root_trace: Optional[list[dict[str, object]]] = None,
     ) -> tuple[float, Optional[tuple[int, int]]]:
         """Minimax 递归搜索（Alpha-Beta 剪枝 + 置换表）。"""
         self._check_timeout()
@@ -594,9 +659,20 @@ class AISearcher:
                     if board.check_win(row, col):
                         score = 100_000.0
                     else:
-                        score, _ = self._minimax(board, depth - 1, alpha, beta, False, stats)
+                        score, _ = self._minimax(
+                            board,
+                            depth - 1,
+                            alpha,
+                            beta,
+                            False,
+                            stats,
+                            None,
+                        )
                 finally:
                     board.undo()
+
+                if root_trace is not None:
+                    root_trace.append(self._trace_move_dict((row, col), score=score))
 
                 if score > best_score:
                     best_score = score
@@ -621,7 +697,15 @@ class AISearcher:
                 if board.check_win(row, col):
                     score = -100_000.0
                 else:
-                    score, _ = self._minimax(board, depth - 1, alpha, beta, True, stats)
+                    score, _ = self._minimax(
+                        board,
+                        depth - 1,
+                        alpha,
+                        beta,
+                        True,
+                        stats,
+                        None,
+                    )
             finally:
                 board.undo()
 
