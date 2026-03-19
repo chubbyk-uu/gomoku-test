@@ -4,7 +4,7 @@
 
 ## 1. 目标
 
-目标是在可复现、正面对战测试里，把 `gomoku-test` 做强，无论执黑或者执白都能击败同级目录下的 `zhou`：
+目标是在可复现、正面对战测试里，把 `gomoku-test` 做强，在多种随机开局下对战同级目录下的 `zhou`，无论执黑或者执白都能取得大于60%的胜率：
 
 - 当前仓库：`/home/jerry/python-test/gomoku/gomoku-test`
 - 对手引擎：`/home/jerry/python-test/gomoku/zhou`
@@ -33,8 +33,7 @@
 - `local_hotness` 候选排序
 - 原生热点加速
 
-当前不在主线里生效的旧东西已经清掉，不要再围绕它们设计实验：
-
+当前不在主线里生效的旧东西已经清掉，不要再围绕它们设计实验，包括：
 - `quiescence`
 - `internal forcing`
 - threat-based early return
@@ -138,7 +137,7 @@
 
 - 先复现，再解释，再改代码，再复测。
 - 先看固定 opening matrix，再看随机对战。
-- 先看白棋失败线，再看黑棋线。
+- 先看白棋失败线，再看黑棋失败线。
 - 优先修搜索、评估、候选排序、深度稳定性。
 - 任何“变强了”的结论都必须带证据。
 
