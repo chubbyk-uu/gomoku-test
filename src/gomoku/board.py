@@ -8,8 +8,10 @@ import numpy as np
 from gomoku.config import AI_CANDIDATE_RANGE, BOARD_SIZE, Player
 
 try:
+    from gomoku.ai._threat_kernels import candidate_moves_radius1 as _candidate_moves_radius1_native
     from gomoku.ai._threat_kernels import check_win as _check_win_native
 except ImportError:  # pragma: no cover - exercised when extension is not built
+    _candidate_moves_radius1_native = None
     _check_win_native = None
 
 _CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
@@ -181,7 +183,9 @@ class Board:
         """
         if not self.move_history:
             return [(BOARD_SIZE // 2, BOARD_SIZE // 2)]
-        return list(self._candidates)
+        if AI_CANDIDATE_RANGE == 1 and _candidate_moves_radius1_native is not None:
+            return _candidate_moves_radius1_native(self.grid)
+        return sorted(self._candidates)
 
     def is_full(self) -> bool:
         """棋盘是否已落满。

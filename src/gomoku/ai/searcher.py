@@ -22,12 +22,10 @@ from gomoku.config import (
 try:
     from gomoku.ai._threat_kernels import analyze_move as _analyze_move_native
     from gomoku.ai._threat_kernels import analyze_moves as _analyze_moves_native
-    from gomoku.ai._threat_kernels import candidate_moves_radius1 as _candidate_moves_radius1_native
     from gomoku.ai._threat_kernels import local_hotness as _local_hotness_native
 except ImportError:  # pragma: no cover - exercised when extension is not built
     _analyze_move_native = None
     _analyze_moves_native = None
-    _candidate_moves_radius1_native = None
     _local_hotness_native = None
 
 # 置换表条目：(depth, score, flag, best_move)
@@ -684,40 +682,8 @@ class AISearcher:
 
     @staticmethod
     def _candidate_moves(board: Board) -> list[tuple[int, int]]:
-        """Return radius-1 row-major candidates for the current single search pipeline."""
-        if _candidate_moves_radius1_native is not None:
-            return _candidate_moves_radius1_native(board.grid)
-        return AISearcher._candidate_moves_python(board)
-
-    @staticmethod
-    def _candidate_moves_python(board: Board) -> list[tuple[int, int]]:
-        """Pure Python baseline for radius-1 row-major candidate generation."""
-        if not board.move_history:
-            center = BOARD_SIZE // 2
-            return [(center, center)]
-
-        moves: list[tuple[int, int]] = []
-        grid = board.grid
-        for row in range(BOARD_SIZE):
-            for col in range(BOARD_SIZE):
-                if grid[row, col] != _NONE:
-                    continue
-                found = False
-                for dr in range(-1, 2):
-                    for dc in range(-1, 2):
-                        nr, nc = row + dr, col + dc
-                        if (
-                            0 <= nr < BOARD_SIZE
-                            and 0 <= nc < BOARD_SIZE
-                            and grid[nr, nc] != _NONE
-                        ):
-                            found = True
-                            break
-                    if found:
-                        break
-                if found:
-                    moves.append((row, col))
-        return moves
+        """Return search candidates from the board-owned candidate pool."""
+        return board.get_candidate_moves()
 
     def _local_hotness(
         self,

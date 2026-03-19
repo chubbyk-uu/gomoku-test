@@ -46,13 +46,14 @@
 
 - `AI_SEARCH_DEPTH = 5`
 - `AI_MAX_CANDIDATES = 20`
+- `AI_CANDIDATE_RANGE = 1`
 - `AI_VCF_ENABLED = True`
 - `AI_VCF_MAX_DEPTH = 10`
 - `AI_VCF_MAX_CANDIDATES = 16`
 
 当前本地可确认状态：
 
-- `gomoku-test` 当前分支：`mainline-search`
+- `gomoku-test` 当前分支：`master`
 - `PYTHONPATH=src pytest -q tests/test_searcher.py tests/test_benchmark.py` -> `40 passed`
 - `gomoku-test` 原生扩展已加载：`_threat_kernels.cpython-311-x86_64-linux-gnu.so`
 - `zhou` 原生扩展已加载：`_eval_kernels.cpython-311-x86_64-linux-gnu.so`
@@ -61,6 +62,7 @@
 
 - 对战和 benchmark 默认应在两边原生扩展都可用时进行。
 - 纯 Python fallback 的时间数据不用于正式结论。
+- 当前 `search` 已直接跟随 `Board.get_candidate_moves()`；修改 `AI_CANDIDATE_RANGE` 会真实影响搜索候选宽度。
 
 ## 4. 历史参考证据
 

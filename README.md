@@ -15,7 +15,7 @@
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`20`
-  - 候选邻域半径配置：`2`
+  - 候选邻域半径配置：`1`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
 
@@ -164,6 +164,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 
 - 仅对白棋早期 root 候选做 `probe2` 二次重排
 - `probe2` 只用于白棋早期 root 排序，不改变黑棋主搜索语义
+- 当前 search 直接使用 `Board.get_candidate_moves()`，候选池语义与 `AI_CANDIDATE_RANGE` 保持一致
 
 ### VCF
 
@@ -418,7 +419,7 @@ ruff check .
 AI_SEARCH_DEPTH = 5
 AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 20
-AI_CANDIDATE_RANGE = 2
+AI_CANDIDATE_RANGE = 1
 AI_VCF_ENABLED = True
 AI_VCF_MAX_DEPTH = 10
 AI_VCF_MAX_CANDIDATES = 16
@@ -430,5 +431,5 @@ AI_MOVE_DELAY_MS = 10
 - 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
 - 想要更强棋力：优先改搜索策略/评估/排序，其次再提高深度
 - 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
-- `AI_CANDIDATE_RANGE` 仍然是有效实现配置，但当前主线不建议把“调宽/调窄候选半径”当作首要优化手段
+- `AI_CANDIDATE_RANGE` 现在会直接影响 board 候选池和 search 实际候选宽度，但当前主线仍不建议把“调宽/调窄候选半径”当作首要优化手段
 - `AI_VCF_MAX_DEPTH`、`AI_VCF_MAX_CANDIDATES` 建议结合题库与对弈 benchmark 做 A/B 验证

@@ -66,7 +66,7 @@ def test_candidate_moves_match_radius_one_row_major():
     board = Board()
     board.place(5, 5, Player.BLACK)
 
-    assert AISearcher._candidate_moves_python(board) == [
+    assert board.get_candidate_moves() == [
         (4, 4),
         (4, 5),
         (4, 6),
@@ -83,19 +83,19 @@ def test_candidate_moves_native_matches_python_reference():
     board.place(5, 5, Player.BLACK)
     board.place(7, 7, Player.WHITE)
 
-    expected = AISearcher._candidate_moves_python(board)
+    expected = board.get_candidate_moves()
     actual = AISearcher._candidate_moves(board)
 
     assert actual == expected
 
 
-def test_candidate_moves_falls_back_to_python_when_native_unavailable(monkeypatch):
+def test_candidate_moves_follows_board_candidate_pool(monkeypatch):
     board = Board()
     board.place(5, 5, Player.BLACK)
 
-    monkeypatch.setattr(searcher_module, "_candidate_moves_radius1_native", None)
+    monkeypatch.setattr(board, "get_candidate_moves", lambda: [(4, 5), (5, 4)])
 
-    assert AISearcher._candidate_moves(board) == AISearcher._candidate_moves_python(board)
+    assert AISearcher._candidate_moves(board) == [(4, 5), (5, 4)]
 
 
 def test_local_hotness_native_matches_python_reference():
