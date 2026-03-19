@@ -246,7 +246,6 @@ class VCFSolver:
         defensive moves and verify whether each move breaks the whole line.
         """
         scored: list[tuple[int, int, float]] = []
-        grid = board.grid
         opponent = self._opponent_of(current_player)
 
         for row, col in moves:
