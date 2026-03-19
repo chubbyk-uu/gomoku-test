@@ -31,7 +31,7 @@
 - `TT`
 - `killer heuristic`
 - `local_hotness` 候选排序
-- `probe2` 白棋 early root rerank
+- 对称 early root rerank
 - 原生热点加速
 
 当前不在主线里生效的旧东西已经清掉，不要再围绕它们设计实验，包括：
@@ -46,7 +46,7 @@
 
 - `AI_SEARCH_DEPTH = 5`
 - `AI_MAX_CANDIDATES = 20`
-- `AI_CANDIDATE_RANGE = 1`
+- `AI_CANDIDATE_RANGE = 2`
 - `AI_VCF_ENABLED = True`
 - `AI_VCF_MAX_DEPTH = 10`
 - `AI_VCF_MAX_CANDIDATES = 16`
@@ -54,9 +54,12 @@
 当前本地可确认状态：
 
 - `gomoku-test` 当前分支：`master`
-- `PYTHONPATH=src pytest -q tests/test_searcher.py tests/test_benchmark.py` -> `40 passed`
+- `PYTHONPATH=src pytest -q tests/test_searcher.py tests/test_board.py -k 'not tt_reused_between_searches'` -> `56 passed, 1 deselected`
 - `gomoku-test` 原生扩展已加载：`_threat_kernels.cpython-311-x86_64-linux-gnu.so`
 - `zhou` 原生扩展已加载：`_eval_kernels.cpython-311-x86_64-linux-gnu.so`
+- 已完成 `depth=5` fixed opening matrix refresh：
+  - `d5_a_white` -> `20胜 5负 0和`
+  - `d5_a_black` -> `25胜 0负 0和`
 
 说明：
 
@@ -101,10 +104,10 @@
 
 ## 5. 当前正式基线
 
-当前正式基线以 `probe2` 版本生成的 fixed opening matrix 为准：
+当前正式基线以“`AI_CANDIDATE_RANGE = 2` + 黑白对称 early root rerank”版本生成的 fixed opening matrix 为准：
 
-- `benchmark_records/d5_a_white_probe2_25_merged.json` -> `16胜 7负 2和`
-- `benchmark_records/d5_a_black_probe2_25_merged.json` -> `25胜 0负 0和`
+- `benchmark_records/d5_a_white_r2_sym_blackrerank_slice_{0_5,5_10,10_15,15_20,20_25}.json` -> 合计 `20胜 5负 0和`
+- `benchmark_records/d5_a_black_r2_sym_blackrerank_slice_{0_5,5_10,10_15,15_20,20_25}.json` -> 合计 `25胜 0负 0和`
 
 对照旧 baseline：
 
@@ -113,9 +116,9 @@
 
 当前基线结论：
 
-- `probe2` 明显改善了 `d5_a_white`
+- 当前版本进一步改善了 `d5_a_white`
 - `d5_a_black` 仍保持强势
-- 当前剩余主要问题集中在白棋边缘 opening 簇，而不是黑棋整体强度
+- 白棋仍有 5 个固定 opening 失败点，后续应继续针对这几个簇做 trace 分析
 
 ## 6. 基线刷新规则
 
@@ -125,7 +128,7 @@
 - 候选排序逻辑变化
 - 评估函数语义变化
 - `VCF` 接入顺序或返回条件变化
-- `probe2` 逻辑变化
+- early root rerank 逻辑变化
 - 搜索深度语义变化
 
 如果没有重刷，就只能引用“历史参考证据”，不能引用“当前正式基线”。
@@ -156,7 +159,7 @@
 默认按这个顺序：
 
 1. 确认现象还能复现。
-2. 先看当前 `probe2` 基线下白棋剩余失败簇
+2. 先看当前正式基线下白棋剩余失败簇
 3. 开局阶段 evaluator 偏差
 4. 根节点着法排序 / early probe 质量
 5. depth=4 vs depth=5 的 horizon 问题

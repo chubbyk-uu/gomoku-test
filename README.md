@@ -9,13 +9,13 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
-- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + white early root probe2 rerank`
+- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + symmetric early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`20`
-  - 候选邻域半径配置：`1`
+  - 候选邻域半径配置：`2`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
 
@@ -36,25 +36,33 @@
 
 ## 当前基线
 
-当前准备公开提交的正式基线是 `probe2` 版本，也就是：
+当前准备公开提交的正式基线是“`AI_CANDIDATE_RANGE = 2` + 黑白对称 early root rerank”版本，也就是：
 
 - 黑白共用主搜索链：`immediate win/block -> VCF win/block -> iterative deepening minimax -> alpha-beta -> TT -> killer -> local_hotness`
-- 仅对白棋早期 root 候选启用轻量 `probe2` 二次重排
+- 黑白双方早期 root 候选都启用轻量 early rerank 二次重排
 - 不使用 opening book / 手工特判开局
 
 当前固定 `d5` opening matrix 基线结果：
 
-- 白棋：`16胜 7负 2和`
+- 白棋：`20胜 5负 0和`
 - 黑棋：`25胜 0负 0和`
 
 对应结果文件：
 
-- [benchmark_records/d5_a_white_probe2_25_merged.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_probe2_25_merged.json)
-- [benchmark_records/d5_a_black_probe2_25_merged.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_probe2_25_merged.json)
+- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_0_5.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_0_5.json)
+- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_5_10.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_5_10.json)
+- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_10_15.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_10_15.json)
+- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_15_20.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_15_20.json)
+- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_20_25.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_20_25.json)
+- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_0_5.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_0_5.json)
+- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_5_10.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_5_10.json)
+- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_10_15.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_10_15.json)
+- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_15_20.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_15_20.json)
+- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_20_25.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_20_25.json)
 
 说明：
 
-- 这些 `probe2` merged 文件是当前正式基线。
+- 这些 `r2_sym_blackrerank` slice 文件共同构成当前正式基线。
 - `benchmark_records/` 里其余旧 `opening_matrix_*`、`white_opening_*`、`opening_puzzles_*` 等记录属于历史参考，不应再直接当作当前版本验收结果。
 
 ## 安装
@@ -160,10 +168,10 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 - killer move 优先级
 - 基于 `local_hotness` 的候选排序
 
-当前公开基线额外保留的白棋早期逻辑：
+当前公开基线额外保留的 early root 逻辑：
 
-- 仅对白棋早期 root 候选做 `probe2` 二次重排
-- `probe2` 只用于白棋早期 root 排序，不改变黑棋主搜索语义
+- 黑白双方早期 root 候选都会做轻量 early rerank 二次重排
+- 该 rerank 只作用在根节点早期排序，不改变递归层主搜索语义
 - 当前 search 直接使用 `Board.get_candidate_moves()`，候选池语义与 `AI_CANDIDATE_RANGE` 保持一致
 
 ### VCF
@@ -419,7 +427,7 @@ ruff check .
 AI_SEARCH_DEPTH = 5
 AI_SEARCH_TIME_LIMIT_S = None
 AI_MAX_CANDIDATES = 20
-AI_CANDIDATE_RANGE = 1
+AI_CANDIDATE_RANGE = 2
 AI_VCF_ENABLED = True
 AI_VCF_MAX_DEPTH = 10
 AI_VCF_MAX_CANDIDATES = 16

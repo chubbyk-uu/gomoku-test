@@ -62,19 +62,35 @@ def test_find_best_move_on_empty_board():
     assert move == (7, 7)
 
 
-def test_candidate_moves_match_radius_one_row_major():
+def test_candidate_moves_match_radius_two_row_major():
     board = Board()
     board.place(5, 5, Player.BLACK)
 
     assert board.get_candidate_moves() == [
+        (3, 3),
+        (3, 4),
+        (3, 5),
+        (3, 6),
+        (3, 7),
+        (4, 3),
         (4, 4),
         (4, 5),
         (4, 6),
+        (4, 7),
+        (5, 3),
         (5, 4),
         (5, 6),
+        (5, 7),
+        (6, 3),
         (6, 4),
         (6, 5),
         (6, 6),
+        (6, 7),
+        (7, 3),
+        (7, 4),
+        (7, 5),
+        (7, 6),
+        (7, 7),
     ]
 
 
@@ -149,16 +165,16 @@ def test_white_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
                 root_trace.append({"move": [move[0], move[1]], "score": 94})
         return 94, candidates[0]
 
-    def fake_probe(self, board, white_move):
+    def fake_probe(self, board, candidate_move):
         scores = {
             (4, 5): 100.0,
             (4, 6): 10.0,
             (4, 7): 50.0,
         }
-        return {"max_reply_score": scores[white_move], "reply_candidates": []}
+        return {"max_reply_score": scores[candidate_move], "reply_candidates": []}
 
     monkeypatch.setattr(AISearcher, "_minimax", fake_minimax)
-    monkeypatch.setattr(AISearcher, "_probe_black_reply_score", fake_probe)
+    monkeypatch.setattr(AISearcher, "_probe_opponent_reply_score", fake_probe)
 
     move = searcher.find_best_move(board)
 
@@ -167,7 +183,7 @@ def test_white_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
     assert "rerank_score" in searcher.last_decision_trace.root_candidates[0]
 
 
-def test_black_root_rerank_does_not_apply(monkeypatch):
+def test_black_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
     board = Board()
     board.place(5, 6, Player.BLACK)
     board.place(4, 5, Player.WHITE)
@@ -180,15 +196,21 @@ def test_black_root_rerank_does_not_apply(monkeypatch):
                 root_trace.append({"move": [move[0], move[1]], "score": 100})
         return 100, candidates[0]
 
-    def fail_probe(self, board, white_move):
-        raise AssertionError("black should not use white root rerank")
+    def fake_probe(self, board, candidate_move):
+        scores = {
+            (3, 6): 90.0,
+            (5, 5): 10.0,
+        }
+        return {"max_reply_score": scores[candidate_move], "reply_candidates": []}
 
     monkeypatch.setattr(AISearcher, "_minimax", fake_minimax)
-    monkeypatch.setattr(AISearcher, "_probe_black_reply_score", fail_probe)
+    monkeypatch.setattr(AISearcher, "_probe_opponent_reply_score", fake_probe)
 
     move = searcher.find_best_move(board)
 
-    assert move == (3, 6)
+    assert move == (5, 5)
+    assert searcher.last_decision_trace.root_candidates[0]["move"] == [5, 5]
+    assert "rerank_score" in searcher.last_decision_trace.root_candidates[0]
 
 
 def test_ai_as_black_wins_when_possible():
