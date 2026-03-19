@@ -96,7 +96,7 @@ class AISearcher:
     """基于 Minimax + Alpha-Beta 剪枝的五子棋 AI 搜索器。
 
     Attributes:
-        depth: 搜索深度（建议 2~4，>3 时速度明显下降）。
+        depth: 搜索深度上限；当前正式基线常用 `depth=5`。
         ai_player: AI 执棋颜色。
     """
 

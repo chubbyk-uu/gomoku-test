@@ -1,6 +1,6 @@
 # 五子棋 (Gomoku)
 
-基于 `Pygame` 的五子棋人机对弈项目。AI 当前主线使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、killer heuristic，以及若干 `Cython` 热点加速。
+基于 `Pygame` 的五子棋人机对弈项目。AI 当前主线使用模式评估、`Minimax`、`Alpha-Beta` 剪枝、置换表、`VCF`、killer heuristic、`local_hotness` 排序，以及若干 `Cython` 热点加速。
 
 ## 当前状态
 
@@ -9,13 +9,13 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
-- 当前稳定版本保留：`VCF + minimax + TT + killer + local hotness ordering`
+- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + white early root probe2 rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
   - 候选点上限：`20`
-  - 候选邻域半径：`2`
+  - 候选邻域半径配置：`2`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
 
@@ -33,6 +33,29 @@
 - `Cython` 热点内核（threat / move analysis / line counting）
 - 最后一手高亮显示
 - 棋盘坐标与天元标记
+
+## 当前基线
+
+当前准备公开提交的正式基线是 `probe2` 版本，也就是：
+
+- 黑白共用主搜索链：`immediate win/block -> VCF win/block -> iterative deepening minimax -> alpha-beta -> TT -> killer -> local_hotness`
+- 仅对白棋早期 root 候选启用轻量 `probe2` 二次重排
+- 不使用 opening book / 手工特判开局
+
+当前固定 `d5` opening matrix 基线结果：
+
+- 白棋：`16胜 7负 2和`
+- 黑棋：`25胜 0负 0和`
+
+对应结果文件：
+
+- [benchmark_records/d5_a_white_probe2_25_merged.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_probe2_25_merged.json)
+- [benchmark_records/d5_a_black_probe2_25_merged.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_probe2_25_merged.json)
+
+说明：
+
+- 这些 `probe2` merged 文件是当前正式基线。
+- `benchmark_records/` 里其余旧 `opening_matrix_*`、`white_opening_*`、`opening_puzzles_*` 等记录属于历史参考，不应再直接当作当前版本验收结果。
 
 ## 安装
 
@@ -137,6 +160,11 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 - killer move 优先级
 - 基于 `local_hotness` 的候选排序
 
+当前公开基线额外保留的白棋早期逻辑：
+
+- 仅对白棋早期 root 候选做 `probe2` 二次重排
+- `probe2` 只用于白棋早期 root 排序，不改变黑棋主搜索语义
+
 ### VCF
 
 `VCF` 求解器位于 [src/gomoku/ai/vcf.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/vcf.py)。
@@ -229,9 +257,15 @@ gomoku-test/
 ├── tools/
 │   ├── benchmark.py
 │   ├── engine_worker.py
+│   ├── extract_opening_puzzles.py
+│   ├── extract_white_opening_table.py
 │   ├── run_benchmark.py
+│   ├── run_opening_matrix.py
 │   ├── run_puzzle_benchmark.py
 │   └── run_vcf_benchmark.py
+├── benchmark_records/
+│   ├── README.md
+│   └── ...
 └── setup.py
 ```
 
@@ -328,6 +362,28 @@ PYTHONPATH=src python tools/run_benchmark.py \
 
 这适合做不同 commit 之间的 head-to-head 对比。
 
+## 固定 Opening Matrix
+
+当前正式 head-to-head 基线优先使用 [tools/run_opening_matrix.py](/home/jerry/python-test/gomoku/gomoku-test/tools/run_opening_matrix.py)。
+
+示例：
+
+```bash
+PYTHONPATH=src python tools/run_opening_matrix.py \
+  --depth-a 5 \
+  --depth-b 5 \
+  --repo-b /home/jerry/python-test/gomoku/zhou \
+  --progress \
+  --save-json benchmark_records/some_opening_matrix.json
+```
+
+说明：
+
+- `A` 是当前 `gomoku-test`
+- `B` 是 `zhou`
+- `run_benchmark.py` 更适合随机/自对弈或跨 worktree 对比
+- 当前正式结果解读，应优先看 fixed opening matrix，再看随机对战
+
 ## 开发
 
 运行测试：
@@ -374,4 +430,5 @@ AI_MOVE_DELAY_MS = 10
 - 想要更快响应：降低 `AI_SEARCH_DEPTH`，或重新启用 `AI_SEARCH_TIME_LIMIT_S`
 - 想要更强棋力：优先改搜索策略/评估/排序，其次再提高深度
 - 想减少动画等待：把 `AI_MOVE_DELAY_MS` 调成更小或 `0`
-- `AI_CANDIDATE_RANGE`、`AI_VCF_MAX_DEPTH` 建议结合题库与对弈 benchmark 做 A/B 验证
+- `AI_CANDIDATE_RANGE` 仍然是有效实现配置，但当前主线不建议把“调宽/调窄候选半径”当作首要优化手段
+- `AI_VCF_MAX_DEPTH`、`AI_VCF_MAX_CANDIDATES` 建议结合题库与对弈 benchmark 做 A/B 验证

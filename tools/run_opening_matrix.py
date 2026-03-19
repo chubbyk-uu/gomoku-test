@@ -1,4 +1,4 @@
-"""Run a fixed opening matrix against another repo and checkpoint every game.
+"""Run the fixed opening matrix used for the current official head-to-head baseline.
 
 The matrix order matches the current investigation workflow:
 1. depth=5, A as WHITE, 25 fixed center openings
@@ -129,7 +129,9 @@ def _write_checkpoint(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run fixed opening matrix benchmark.")
+    parser = argparse.ArgumentParser(
+        description="Run the fixed opening matrix benchmark used for official baseline refreshes."
+    )
     parser.add_argument("--repo-b", type=Path, required=True, help="Repo path for zhou engine")
     parser.add_argument(
         "--output-json",

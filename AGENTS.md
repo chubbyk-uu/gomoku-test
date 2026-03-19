@@ -31,13 +31,14 @@
 - `TT`
 - `killer heuristic`
 - `local_hotness` 候选排序
+- `probe2` 白棋 early root rerank
 - 原生热点加速
 
 当前不在主线里生效的旧东西已经清掉，不要再围绕它们设计实验，包括：
 - `quiescence`
 - `internal forcing`
 - threat-based early return
-- root rerank / dynamic cutoff 旧分支
+- 旧版 root rerank / dynamic cutoff 分支
 
 ## 3. 当前配置与验证状态
 
@@ -52,7 +53,7 @@
 当前本地可确认状态：
 
 - `gomoku-test` 当前分支：`mainline-search`
-- `PYTHONPATH=src pytest -q tests/test_searcher.py tests/test_benchmark.py` -> `38 passed`
+- `PYTHONPATH=src pytest -q tests/test_searcher.py tests/test_benchmark.py` -> `40 passed`
 - `gomoku-test` 原生扩展已加载：`_threat_kernels.cpython-311-x86_64-linux-gnu.so`
 - `zhou` 原生扩展已加载：`_eval_kernels.cpython-311-x86_64-linux-gnu.so`
 
@@ -82,13 +83,6 @@
 - 评估当前版本是否已经提升
 - 作为当前版本的正式验收基线
 
-这些历史记录里，最关键的是固定开局矩阵：
-
-- `d5_a_white`: `1 / 24 / 0`
-- `d5_a_black`: `2 / 16 / 7`
-- `d4_a_white`: `3 / 11 / 11`
-- `d4_a_black`: `3 / 14 / 8`
-
 这些历史记录说明旧版本曾经暴露出以下问题：
 
 - 白棋线显著偏弱。
@@ -105,19 +99,21 @@
 
 ## 5. 当前正式基线
 
-由于 `minimax` 主链已经发生实质变化，已不再对应这些旧记录生成时的版本，旧对局结果不再等同于当前版本基线。
+当前正式基线以 `probe2` 版本生成的 fixed opening matrix 为准：
 
-因此：
+- `benchmark_records/d5_a_white_probe2_25_merged.json` -> `16胜 7负 2和`
+- `benchmark_records/d5_a_black_probe2_25_merged.json` -> `25胜 0负 0和`
 
-- 当前正式基线必须由当前代码重新生成。
-- 在新的 fixed opening matrix 和随机对战结果生成前，不得把旧记录当作当前版本验收依据。
-- 现阶段旧记录只能叫“历史参考证据”，不能叫“当前基线”。
+对照旧 baseline：
 
-当前优先需要补齐的新基线：
+- `benchmark_records/d5_a_white_25_merged.json` -> `0胜 23负 2和`
+- `benchmark_records/d5_a_black_25_merged.json` -> `25胜 0负 0和`
 
-1. 用当前代码重跑 fixed opening matrix
-2. 用当前代码重跑小规模随机对战基线
-3. 如有必要，再补当前版本的白棋关键开局表
+当前基线结论：
+
+- `probe2` 明显改善了 `d5_a_white`
+- `d5_a_black` 仍保持强势
+- 当前剩余主要问题集中在白棋边缘 opening 簇，而不是黑棋整体强度
 
 ## 6. 基线刷新规则
 
@@ -127,6 +123,7 @@
 - 候选排序逻辑变化
 - 评估函数语义变化
 - `VCF` 接入顺序或返回条件变化
+- `probe2` 逻辑变化
 - 搜索深度语义变化
 
 如果没有重刷，就只能引用“历史参考证据”，不能引用“当前正式基线”。
@@ -157,11 +154,12 @@
 默认按这个顺序：
 
 1. 确认现象还能复现。
-2. 开局阶段 evaluator 偏差
-3. 根节点着法排序
-4. depth=4 vs depth=5 的  horizon 问题
-5. VCF 改进
-6. 最后再看速度、节点数、耗时。
+2. 先看当前 `probe2` 基线下白棋剩余失败簇
+3. 开局阶段 evaluator 偏差
+4. 根节点着法排序 / early probe 质量
+5. depth=4 vs depth=5 的 horizon 问题
+6. VCF 改进
+7. 最后再看速度、节点数、耗时。
 
 如果某个结论无法落到“具体开局、具体手数、具体 trace”，就还不够强。
 

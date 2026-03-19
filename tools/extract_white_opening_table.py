@@ -1,4 +1,8 @@
-"""Extract a white-side opening response table from opening puzzle cases."""
+"""Extract a white-side opening response table from opening puzzle cases.
+
+This is a historical analysis helper for old opening catalogs, not a required
+step in the current official probe2 baseline workflow.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,12 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract white opening response table.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Extract a white opening response table from opening puzzle cases. "
+            "Primarily intended for historical analysis artifacts."
+        )
+    )
     parser.add_argument("input_json", type=Path)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-md", type=Path, required=True)

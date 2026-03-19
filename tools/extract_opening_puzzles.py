@@ -1,4 +1,8 @@
-"""Extract deterministic opening branches from a benchmark record file."""
+"""Extract deterministic opening branches from a benchmark record file.
+
+This is a historical analysis helper. It is useful for reviewing older opening
+failures, but it is not part of the current official probe2 baseline workflow.
+"""
 
 from __future__ import annotations
 
@@ -137,7 +141,12 @@ def _write_markdown(path: Path, cases: list[dict]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract opening puzzle cases from benchmark JSON.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Extract opening puzzle cases from benchmark JSON. "
+            "Primarily intended for historical analysis records."
+        )
+    )
     parser.add_argument("input_json", type=Path)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-md", type=Path, required=True)

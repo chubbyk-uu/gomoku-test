@@ -1,4 +1,4 @@
-"""CLI entry point for the Gomoku AI benchmark tool.
+"""CLI entry point for generic automated self-play and repo-vs-repo benchmarking.
 
 Usage:
     python tools/run_benchmark.py
@@ -22,7 +22,10 @@ from gomoku.config import Player  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark two Gomoku AI searchers via automated self-play.",
+        description=(
+            "Benchmark two Gomoku AI searchers via automated self-play. "
+            "For the current official fixed-opening baseline, prefer tools/run_opening_matrix.py."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
