@@ -176,7 +176,7 @@ def test_candidate_moves_respect_configured_range(monkeypatch):
     assert (9, 7) not in moves
 
     board_module = importlib.reload(board_module)
-    assert AI_CANDIDATE_RANGE == 2
+    assert AI_CANDIDATE_RANGE == 1
 
 
 # ---------------------------------------------------------------------------
