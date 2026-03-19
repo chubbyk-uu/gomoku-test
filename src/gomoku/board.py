@@ -18,6 +18,7 @@ _CANDIDATE_OFFSETS: tuple[tuple[int, int], ...] = tuple(
     for dc in range(-AI_CANDIDATE_RANGE, AI_CANDIDATE_RANGE + 1)
     if not (dr == 0 and dc == 0)
 )
+_NONE = int(Player.NONE)
 
 # Zobrist 哈希表：_ZOBRIST[row][col][player_index]，player_index: BLACK=0, WHITE=1
 # 固定随机种子保证每次进程内一致
@@ -65,12 +66,13 @@ class Board:
         """
         if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
             return False
-        if self.grid[row, col] != Player.NONE:
+        if self.grid[row, col] != _NONE:
             return False
 
         # 计算候选点增量：落子前统计，确保 grid 尚未更新
         grid = self.grid
         candidates = self._candidates
+        player_index = int(player) - 1
         removed: set[tuple[int, int]] = {(row, col)} if (row, col) in candidates else set()
         added: set[tuple[int, int]] = set()
         for dr, dc in _CANDIDATE_OFFSETS:
@@ -78,7 +80,7 @@ class Board:
             if (
                 0 <= nr < BOARD_SIZE
                 and 0 <= nc < BOARD_SIZE
-                and grid[nr, nc] == Player.NONE
+                and grid[nr, nc] == _NONE
                 and (nr, nc) not in candidates
             ):
                 added.add((nr, nc))
@@ -88,7 +90,7 @@ class Board:
         self._candidate_history.append((added, removed))
 
         grid[row, col] = player
-        self.hash ^= _ZOBRIST[row][col][int(player) - 1]
+        self.hash ^= _ZOBRIST[row][col][player_index]
         self.move_history.append((row, col, player))
         self.last_move = (row, col)
         if self._eval_state is not None:
@@ -104,8 +106,9 @@ class Board:
         if not self.move_history:
             return None
         row, col, player = self.move_history.pop()
-        self.grid[row, col] = Player.NONE
-        self.hash ^= _ZOBRIST[row][col][int(player) - 1]
+        player_index = int(player) - 1
+        self.grid[row, col] = _NONE
+        self.hash ^= _ZOBRIST[row][col][player_index]
         self.last_move = (
             (self.move_history[-1][0], self.move_history[-1][1]) if self.move_history else None
         )
@@ -143,7 +146,7 @@ class Board:
     def _check_win_python(self, row: int, col: int) -> bool:
         """Pure Python baseline for five-in-a-row detection."""
         player_val = int(self.grid[row, col])
-        if player_val == Player.NONE:
+        if player_val == _NONE:
             return False
 
         def _count_direction(dr: int, dc: int) -> int:
@@ -186,7 +189,7 @@ class Board:
         Returns:
             True 表示无空位。
         """
-        return bool(np.all(self.grid != Player.NONE))
+        return bool(np.all(self.grid != _NONE))
 
     def copy(self) -> "Board":
         """返回棋盘的深拷贝，用于 AI 搜索时的模拟落子。

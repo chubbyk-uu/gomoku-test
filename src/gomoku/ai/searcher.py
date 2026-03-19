@@ -35,6 +35,7 @@ except ImportError:  # pragma: no cover - exercised when extension is not built
 _TTEntry = tuple[int, float, str, Optional[tuple[int, int]]]
 _DIRECTIONS: tuple[tuple[int, int], ...] = ((1, 0), (0, 1), (1, 1), (1, -1))
 _MoveAnalysis = tuple[bool, int]
+_NONE = int(Player.NONE)
 
 
 @dataclass
@@ -290,7 +291,7 @@ class AISearcher:
             length += 1
             r += dr
             c += dc
-        is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
+        is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == _NONE
         return length, is_open
 
     def _analyze_move_for_player(
@@ -305,7 +306,7 @@ class AISearcher:
             is_win, score = _analyze_move_native(board.grid, row, col, int(player))
             return bool(is_win), int(score)
 
-        if board.grid[row, col] != Player.NONE:
+        if board.grid[row, col] != _NONE:
             return False, -1
 
         directional_scores: list[int] = []
@@ -434,7 +435,7 @@ class AISearcher:
         grid = board.grid
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
-                if grid[row, col] != Player.NONE:
+                if grid[row, col] != _NONE:
                     continue
                 found = False
                 for dr in range(-1, 2):
@@ -443,7 +444,7 @@ class AISearcher:
                         if (
                             0 <= nr < BOARD_SIZE
                             and 0 <= nc < BOARD_SIZE
-                            and grid[nr, nc] != Player.NONE
+                            and grid[nr, nc] != _NONE
                         ):
                             found = True
                             break
@@ -473,7 +474,7 @@ class AISearcher:
         player: Player,
     ) -> int:
         """Pure Python baseline for local ordering hotness."""
-        if board.grid[row, col] != Player.NONE:
+        if board.grid[row, col] != _NONE:
             return 0
 
         score = 0
