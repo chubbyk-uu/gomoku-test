@@ -11,6 +11,10 @@
 - 支持独立 `VCF` benchmark / profiling
 - 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + symmetric early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
+- 当前测试状态：`pytest -q` -> `129 passed`
+- 当前已修复两个重要 correctness / probe 问题：
+  - 根节点 `TT` 条目与最终 root 决策不一致
+  - root rerank probe 错误复用 `killer` 历史
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
@@ -36,34 +40,36 @@
 
 ## 当前基线
 
-当前准备公开提交的正式基线是“`AI_CANDIDATE_RANGE = 2` + 黑白对称 early root rerank”版本，也就是：
+当前对 `zhou(depth=5)` 的主线配置仍然是：
 
 - 黑白共用主搜索链：`immediate win/block -> VCF win/block -> iterative deepening minimax -> alpha-beta -> TT -> killer -> local_hotness`
 - 黑白双方早期 root 候选都启用轻量 early rerank 二次重排
 - 不使用 opening book / 手工特判开局
 
-当前固定 `d5` opening matrix 基线结果：
+但 fixed opening matrix 的解读方式已经更新：
 
-- 白棋：`20胜 5负 0和`
+- 黑棋在当前 `5x5` center opening matrix 上经常表现为“同一条未触边主线的平移重复”，因此 `25/25` 不能简单当成 25 个独立样本。
+- 白棋 25 盘也不是 25 个独立问题，而是少数几条归一化主线簇。
+- 当前最有价值的分析方式不是只看总胜负，而是看：
+  - 哪些 opening 属于同一条归一化主线
+  - 第一次分歧出现在第几手
+  - 分歧来自 `minimax`、`vcf_block`、`immediate_block` 还是别的阶段
+
+最近一次本地 `d5` 对 `zhou` 的 center `5x5` fixed opening matrix 结果是：
+
+- 白棋：`10胜 15负 0和`
 - 黑棋：`25胜 0负 0和`
 
-对应结果文件：
+当前对白棋最关键的新发现：
 
-- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_0_5.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_0_5.json)
-- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_5_10.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_5_10.json)
-- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_10_15.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_10_15.json)
-- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_15_20.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_15_20.json)
-- [benchmark_records/d5_a_white_r2_sym_blackrerank_slice_20_25.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_white_r2_sym_blackrerank_slice_20_25.json)
-- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_0_5.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_0_5.json)
-- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_5_10.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_5_10.json)
-- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_10_15.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_10_15.json)
-- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_15_20.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_15_20.json)
-- [benchmark_records/d5_a_black_r2_sym_blackrerank_slice_20_25.json](/home/jerry/python-test/gomoku/gomoku-test/benchmark_records/d5_a_black_r2_sym_blackrerank_slice_20_25.json)
+- 白棋代表性赢簇和输簇前 5 手归一化后完全一致。
+- 第一次关键分歧出现在第 6 手，且 `trace.source = vcf_block`。
+- 当前下一步最该查的是：为什么白棋在靠边 opening 簇上会在第 6 手 `vcf_block` 分成两条不同主线。
 
-说明：
+补充说明：
 
-- 这些 `r2_sym_blackrerank` slice 文件共同构成当前正式基线。
-- `benchmark_records/` 里其余旧 `opening_matrix_*`、`white_opening_*`、`opening_puzzles_*` 等记录属于历史参考，不应再直接当作当前版本验收结果。
+- `benchmark_records/` 现在是本地忽略目录，不再作为仓库跟踪内容。
+- 正式 benchmark 结果请单独记录执行日期、命令和结果摘要，而不要依赖仓库内长期保存的 JSON。
 
 ## 安装
 
@@ -272,9 +278,6 @@ gomoku-test/
 │   ├── run_opening_matrix.py
 │   ├── run_puzzle_benchmark.py
 │   └── run_vcf_benchmark.py
-├── benchmark_records/
-│   ├── README.md
-│   └── ...
 └── setup.py
 ```
 
@@ -391,7 +394,7 @@ PYTHONPATH=src python tools/run_opening_matrix.py \
 - `A` 是当前 `gomoku-test`
 - `B` 是 `zhou`
 - `run_benchmark.py` 更适合随机/自对弈或跨 worktree 对比
-- 当前正式结果解读，应优先看 fixed opening matrix，再看随机对战
+- 当前正式结果解读，应优先看 fixed opening matrix 的归一化主线簇，再看随机对战
 
 ## 开发
 
