@@ -163,3 +163,37 @@ def test_opening_matrix_cli_can_run_only_white(tmp_path, monkeypatch):
 
     assert (tmp_path / "white_only.json").exists()
     assert captured == ["d5_a_white"]
+
+
+def test_opening_matrix_cli_defaults_repo_b_to_local_opponent(tmp_path, monkeypatch):
+    module = importlib.import_module("run_opening_matrix")
+    captured: list[str] = []
+
+    def fake_run_group(*, repo_a, repo_b, openings, group, output_path, max_moves, parallel, slices_dir):
+        captured.append(repo_b)
+        payload = module._group_payload(
+            repo_a=repo_a,
+            repo_b=repo_b,
+            openings=openings,
+            group=group,
+            games=[],
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(module, "_run_group", fake_run_group)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_opening_matrix.py",
+            "--colors",
+            "white",
+            "--output-white-json",
+            str(tmp_path / "white_only.json"),
+        ],
+    )
+
+    module.main()
+
+    assert captured == [str((Path(module.__file__).resolve().parents[1] / "opponent" / "zhou").resolve())]

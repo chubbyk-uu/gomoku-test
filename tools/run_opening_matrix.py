@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from benchmark import _EngineWrapper  # noqa: E402
+from repo_paths import DEFAULT_OPPONENT_REPO, REPO_ROOT  # noqa: E402
 
 from gomoku.board import Board  # noqa: E402
 from gomoku.config import Player  # noqa: E402
@@ -301,7 +302,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the official 5-opening benchmark and write merged white/black outputs."
     )
-    parser.add_argument("--repo-b", type=Path, required=True, help="Repo path for zhou engine")
+    parser.add_argument(
+        "--repo-b",
+        type=Path,
+        default=DEFAULT_OPPONENT_REPO,
+        help="Repo path for zhou engine (default: ./opponent/zhou)",
+    )
     parser.add_argument(
         "--colors",
         choices=("both", "white", "black"),
@@ -332,7 +338,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    repo_a = str(Path.cwd().resolve())
+    repo_a = str(REPO_ROOT)
     repo_b = str(args.repo_b.resolve())
     openings = list(_FIXED_OPENINGS)
     parallel = max(1, min(args.parallel, len(openings) * 2))

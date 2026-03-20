@@ -16,9 +16,10 @@ from benchmark import _EngineWrapper
 from gomoku.ai.searcher import AISearcher
 from gomoku.board import Board
 from gomoku.config import Player
+from repo_paths import DEFAULT_OPPONENT_REPO, REPO_ROOT
 
-REPO_A = str(Path(__file__).parent.parent.resolve())
-REPO_B = str(Path("/home/jerry/python-test/gomoku/zhou").resolve())
+REPO_A = str(REPO_ROOT)
+REPO_B = str(DEFAULT_OPPONENT_REPO)
 DEPTH = 5
 OPENING = (7, 5)
 DISCOUNTS = [0, 200, 300, 400, 500, 600, 700, 800]

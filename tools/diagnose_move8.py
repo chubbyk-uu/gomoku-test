@@ -20,9 +20,10 @@ from benchmark import _EngineWrapper  # noqa: E402
 
 from gomoku.board import Board  # noqa: E402
 from gomoku.config import Player  # noqa: E402
+from repo_paths import DEFAULT_OPPONENT_REPO, REPO_ROOT  # noqa: E402
 
-REPO_A = str(Path(__file__).parent.parent.resolve())   # gomoku-test
-REPO_B = str(Path("/home/jerry/python-test/gomoku/zhou").resolve())  # zhou
+REPO_A = str(REPO_ROOT)   # gomoku-test
+REPO_B = str(DEFAULT_OPPONENT_REPO)  # zhou
 
 OPENING = (4, 4)
 DEPTH = 5
