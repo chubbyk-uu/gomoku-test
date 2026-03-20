@@ -9,9 +9,10 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
+- 对局界面右上角提供 `Export Pos` 按钮，可随时导出当前人工对战局面
 - 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + black-only early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
-- 当前测试状态：`pytest -q` -> `143 passed`
+- 当前测试状态：`pytest -q` -> `149 passed`
 - 当前已修复两个重要 correctness / probe 问题：
   - 根节点 `TT` 条目与最终 root 决策不一致
   - root rerank probe 错误复用 `killer` 历史
@@ -155,6 +156,7 @@
 
 - `benchmark_records/` 现在是本地忽略目录，不再作为仓库跟踪内容。
 - 正式 benchmark 结果请单独记录执行日期、命令和结果摘要，而不要依赖仓库内长期保存的 JSON。
+- 人机对战里如果需要保留局面，可直接点击右上角 `Export Pos`，当前局面会写到 `benchmark_records/manual_positions/`，便于后续对白棋弱点或人工样本做复盘。
 
 ## 安装
 
@@ -239,6 +241,7 @@ python -m gomoku
 | 开局界面 | `B` | 执黑，玩家先手 |
 | 开局界面 | `W` | 执白，AI 先手 |
 | 对局中 | 鼠标左键 | 在最近的交叉点落子 |
+| 对局中 | 点击 `Export Pos` | 导出当前局面到 `benchmark_records/manual_positions/` |
 | 对局中 | `U` | 悔棋（撤回双方各一步） |
 | 结束界面 | `R` | 重新开始 |
 | 结束界面 | `Q` | 退出游戏 |
@@ -247,7 +250,7 @@ python -m gomoku
 
 ### 搜索
 
-AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/searcher.py)。
+AI 搜索器位于 `src/gomoku/ai/searcher.py`。
 
 当前搜索流程大致包括：
 
@@ -261,13 +264,14 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 
 当前公开基线额外保留的 early root 逻辑：
 
-- 黑白双方早期 root 候选都会做轻量 early rerank 二次重排
+- 黑棋早期 root 候选会做轻量 early rerank 二次重排
+- 白棋默认关闭 early root rerank；当前白棋主线以 raw minimax 为准
 - 该 rerank 只作用在根节点早期排序，不改变递归层主搜索语义
 - 当前 search 直接使用 `Board.get_candidate_moves()`，候选池语义与 `AI_CANDIDATE_RANGE` 保持一致
 
 ### VCF
 
-`VCF` 求解器位于 [src/gomoku/ai/vcf.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/vcf.py)。
+`VCF` 求解器位于 `src/gomoku/ai/vcf.py`。
 
 当前实现特性包括：
 
@@ -292,7 +296,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 
 ### 评估函数
 
-评估器位于 [src/gomoku/ai/evaluator.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/evaluator.py)。
+评估器位于 `src/gomoku/ai/evaluator.py`。
 
 当前使用模式识别打分，覆盖：
 
@@ -313,7 +317,7 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 
 ### Cython 热点
 
-热点内核位于 [src/gomoku/ai/_threat_kernels.pyx](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/_threat_kernels.pyx)。
+热点内核位于 `src/gomoku/ai/_threat_kernels.pyx`。
 
 当前已下沉的热点包括：
 
@@ -376,7 +380,7 @@ gomoku-test/
 
 ## 固定题库
 
-固定题库位于 [src/gomoku/ai/puzzles.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/ai/puzzles.py)，当前覆盖：
+固定题库位于 `src/gomoku/ai/puzzles.py`，当前覆盖：
 
 - 一步杀
 - 必防冲四
@@ -475,7 +479,7 @@ PYTHONPATH=src python tools/run_benchmark.py \
 
 ## 固定 Opening Matrix
 
-当前正式 head-to-head 基线优先使用 [tools/run_opening_matrix.py](/home/jerry/python-test/gomoku/gomoku-test/tools/run_opening_matrix.py)。
+当前正式 head-to-head 基线优先使用 `tools/run_opening_matrix.py`。
 
 示例：
 
@@ -523,7 +527,7 @@ ruff check .
 
 ## 可调参数
 
-配置文件在 [src/gomoku/config.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/config.py)。
+配置文件在 `src/gomoku/config.py`。
 
 ```python
 AI_SEARCH_DEPTH = 5

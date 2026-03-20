@@ -25,12 +25,18 @@ class _DummyRenderer:
         self.menu_draws = 0
         self.board_draws = 0
         self.game_over_texts: list[str] = []
+        self.export_button_draws = 0
+        self.export_statuses: list[str] = []
 
     def draw_menu(self) -> None:
         self.menu_draws += 1
 
     def draw_board(self, board: object) -> None:
         self.board_draws += 1
+
+    def draw_export_button(self, rect: object, status_text: str = "") -> None:
+        self.export_button_draws += 1
+        self.export_statuses.append(status_text)
 
     def draw_game_over(self, winner_text: str) -> None:
         self.game_over_texts.append(winner_text)
@@ -114,3 +120,44 @@ def test_undo_handles_zero_one_and_multiple_moves(monkeypatch):
 
     assert controller._board.move_history == [(7, 7, Player.BLACK)]
     assert controller._turn == controller._human_player
+
+
+def test_export_current_position_writes_json(tmp_path, monkeypatch):
+    controller = _make_controller(monkeypatch)
+    controller._enter_playing()
+    controller._board.place(7, 7, Player.BLACK)
+    controller._board.place(7, 8, Player.WHITE)
+    controller._turn = Player.BLACK
+
+    monkeypatch.chdir(tmp_path)
+
+    output_path = controller._export_current_position()
+
+    assert output_path.exists()
+    payload = output_path.read_text(encoding="utf-8")
+    assert '"turn": "BLACK"' in payload
+    assert '"player": "BLACK"' in payload
+    assert '"player": "WHITE"' in payload
+    assert controller._export_status_text.startswith("Saved position_")
+
+
+def test_clicking_export_button_exports_without_playing_move(tmp_path, monkeypatch):
+    controller = _make_controller(monkeypatch)
+    controller._enter_playing()
+    controller.renderer.pixel_result = (7, 7)
+    history_before = controller._board.move_history.copy()
+    monkeypatch.chdir(tmp_path)
+
+    event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        button=1,
+        pos=(controller._export_button_rect.centerx, controller._export_button_rect.centery),
+    )
+    monkeypatch.setattr(game_module.pygame.event, "get", lambda: [event])
+
+    controller._handle_playing_events()
+
+    assert controller._board.move_history == history_before
+    export_dir = tmp_path / "benchmark_records" / "manual_positions"
+    files = list(export_dir.glob("position_*.json"))
+    assert len(files) == 1

@@ -1,9 +1,7 @@
 """Game controller: state machine managing the full game loop."""
 
-import json
 import sys
-from datetime import datetime
-from pathlib import Path
+import threading
 
 import pygame
 
@@ -12,7 +10,6 @@ from gomoku.board import Board
 from gomoku.config import (
     AI_MOVE_DELAY_MS,
     AI_SEARCH_DEPTH,
-    AI_SEARCH_TIME_LIMIT_S,
     FPS,
     WINDOW_SIZE,
     GameState,
@@ -39,7 +36,6 @@ class GameController:
         pygame.display.set_caption("Gomoku")
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
-        self._export_button_rect = pygame.Rect(WINDOW_SIZE - 170, 10, 150, 30)
 
         # 每局重置的状态
         self._board: Board
@@ -49,7 +45,11 @@ class GameController:
         self._turn: Player
         self._state: GameState
         self._winner_text: str = ""
-        self._export_status_text: str = ""
+
+        # AI 异步计算相关
+        self._ai_thinking: bool = False
+        self._ai_result: tuple[int, int] | None = None
+        self._ai_think_start: int = 0  # pygame.time.get_ticks()
 
     # ------------------------------------------------------------------
     # Public
@@ -59,10 +59,9 @@ class GameController:
         """启动并运行游戏主循环，直到玩家退出。"""
         self._start_new_game()
         while True:
-            prev_state = self._state
             self._tick()
-            # 仅在 GAME_OVER → MENU 的状态转换时开始新一局，避免每帧重复初始化
-            if prev_state == GameState.GAME_OVER and self._state == GameState.MENU:
+            # GAME_OVER 中按 R 会把 state 设回 MENU，此时开始新一局
+            if self._state == GameState.MENU:
                 self._start_new_game()
 
     # ------------------------------------------------------------------
@@ -76,8 +75,9 @@ class GameController:
         self._ai_player = Player.WHITE
         self._turn = Player.BLACK
         self._winner_text = ""
-        self._export_status_text = ""
         self._state = GameState.MENU
+        self._ai_thinking = False
+        self._ai_result = None
 
         self.renderer.draw_menu()
         pygame.display.flip()
@@ -97,6 +97,19 @@ class GameController:
         elif self._state == GameState.GAME_OVER:
             self._handle_game_over_events()
         self.clock.tick(FPS)
+
+    def _draw_thinking_indicator(self) -> None:
+        """在 AI 思考时显示动态提示。"""
+        elapsed = pygame.time.get_ticks() - self._ai_think_start
+        dots = "." * (1 + (elapsed // 500) % 3)
+        font = pygame.font.SysFont(None, 28)
+        text = font.render(f"AI thinking{dots}", True, (180, 0, 0))
+        rect = text.get_rect(center=(WINDOW_SIZE // 2, 15))
+        # 只重绘顶部提示区域
+        bg_rect = pygame.Rect(0, 0, WINDOW_SIZE, 30)
+        self.renderer.draw_board(self._board)
+        self.screen.blit(text, rect)
+        pygame.display.flip()
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -128,9 +141,6 @@ class GameController:
                 if event.key == pygame.K_u:
                     self._undo()
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self._export_button_rect.collidepoint(event.pos):
-                    self._export_current_position()
-                    continue
                 if self._turn == self._human_player:
                     coords = self.renderer.pixel_to_board(event.pos)
                     if coords is not None:
@@ -154,13 +164,10 @@ class GameController:
 
     def _enter_playing(self) -> None:
         """切换到 PLAYING 状态并初始化 AI。"""
-        self._ai = AISearcher(
-            depth=AI_SEARCH_DEPTH,
-            ai_player=self._ai_player,
-            time_limit_s=AI_SEARCH_TIME_LIMIT_S,
-        )
+        self._ai = AISearcher(depth=AI_SEARCH_DEPTH, ai_player=self._ai_player)
         self._state = GameState.PLAYING
-        self._redraw_playing()
+        self.renderer.draw_board(self._board)
+        pygame.display.flip()
 
     def _place_and_check(self, row: int, col: int, player: Player) -> None:
         """落子，更新显示，检查胜负/平局。
@@ -173,7 +180,8 @@ class GameController:
         if not self._board.place(row, col, player):
             return
 
-        self._redraw_playing()
+        self.renderer.draw_board(self._board)
+        pygame.display.flip()
 
         if self._board.check_win(row, col):
             self._winner_text = "You win!" if player == self._human_player else "Computer wins!"
@@ -186,25 +194,58 @@ class GameController:
             self._turn = self._ai_player if player == self._human_player else self._human_player
 
     def _ai_turn(self) -> None:
-        """执行 AI 落子：延时 → 搜索 → 落子 → 检查胜负。"""
-        pygame.time.wait(AI_MOVE_DELAY_MS)
-        move = self._ai.find_best_move(self._board)
-        if move is None:
-            self._winner_text = "Draw!"
-            self._enter_game_over()
+        """执行 AI 落子（非阻塞）：后台线程搜索，主线程保持响应。"""
+        if not self._ai_thinking and self._ai_result is None:
+            # 启动后台搜索
+            self._ai_thinking = True
+            self._ai_think_start = pygame.time.get_ticks()
+            board_copy = self._board.copy()
+
+            def _search() -> None:
+                result = self._ai.find_best_move(board_copy)
+                self._ai_result = result
+
+            threading.Thread(target=_search, daemon=True).start()
+
+        if self._ai_thinking and self._ai_result is None:
+            # 搜索进行中，显示提示并保持事件响应
+            self._draw_thinking_indicator()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._quit()
             return
-        self._place_and_check(*move, self._ai_player)
+
+        if self._ai_result is not None:
+            # 搜索完成，确保至少等待 AI_MOVE_DELAY_MS 再落子
+            elapsed = pygame.time.get_ticks() - self._ai_think_start
+            if elapsed < AI_MOVE_DELAY_MS:
+                self._draw_thinking_indicator()
+                return
+
+            move = self._ai_result
+            self._ai_thinking = False
+            self._ai_result = None
+
+            if move is None:
+                self._winner_text = "Draw!"
+                self._enter_game_over()
+                return
+            self._place_and_check(*move, self._ai_player)
 
     def _undo(self) -> None:
         """悔棋：撤销最近两步（AI + 人类各一步），回到玩家回合。"""
         if not self._board.move_history:
             return
+        if self._ai_thinking:
+            return  # AI 思考中不允许悔棋
         # 撤销最多两步
         steps = min(2, len(self._board.move_history))
         for _ in range(steps):
             self._board.undo()
         self._turn = self._human_player
-        self._redraw_playing()
+        self._ai_result = None
+        self.renderer.draw_board(self._board)
+        pygame.display.flip()
 
     def _enter_game_over(self) -> None:
         """切换到 GAME_OVER 状态并显示结果画面。"""
@@ -215,34 +256,6 @@ class GameController:
     # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
-
-    def _redraw_playing(self) -> None:
-        self.renderer.draw_board(self._board)
-        self.renderer.draw_export_button(self._export_button_rect, self._export_status_text)
-        pygame.display.flip()
-
-    def _export_current_position(self) -> Path:
-        export_dir = Path("benchmark_records") / "manual_positions"
-        export_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now()
-        output_path = export_dir / f"position_{now.strftime('%Y%m%d_%H%M%S_%f')}.json"
-        payload = {
-            "saved_at": now.isoformat(timespec="seconds"),
-            "state": self._state.name,
-            "human_player": self._human_player.name,
-            "ai_player": self._ai_player.name,
-            "turn": self._turn.name,
-            "winner_text": self._winner_text,
-            "moves": [
-                {"row": row, "col": col, "player": player.name}
-                for row, col, player in self._board.move_history
-            ],
-        }
-        output_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-        self._export_status_text = f"Saved {output_path.name}"
-        if self._state == GameState.PLAYING:
-            self._redraw_playing()
-        return output_path
 
     @staticmethod
     def _quit() -> None:

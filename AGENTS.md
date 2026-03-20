@@ -6,8 +6,8 @@
 
 目标是提升真实棋力，在可复现的 head-to-head 测试里尽可能稳定地战胜同级目录下的 `zhou`，以及后续其他五子棋 AI：
 
-- 当前仓库：`/home/jerry/python-test/gomoku/gomoku-test`
-- 对手引擎：`/home/jerry/python-test/gomoku/gomoku-test/opponent/zhou`
+- 当前仓库：仓库根目录
+- 对手引擎：`opponent/zhou`
 
 硬约束：
 
@@ -43,7 +43,7 @@
 
 ## 3. 当前配置与已确认状态
 
-当前 [config.py](/home/jerry/python-test/gomoku/gomoku-test/src/gomoku/config.py) 的关键配置：
+当前 `src/gomoku/config.py` 的关键配置：
 
 - `AI_SEARCH_DEPTH = 5`
 - `AI_MAX_CANDIDATES = 20`
@@ -67,6 +67,7 @@
 - 对战和 benchmark 默认应在两边原生扩展都可用时进行。
 - 纯 Python fallback 的时间数据不用于正式结论。
 - `benchmark_records/` 现在是本地忽略目录，不再作为仓库基线来源；正式结果需要在工作记录里明确写出日期与命令来源。
+- 人机对局界面右上角现在有 `Export Pos` 按钮；点击后会把当前局面写到 `benchmark_records/manual_positions/`，方便后续复盘白棋失败局或人工对战样本。
 
 ## 4. 对 opening matrix 的最新认识
 
@@ -133,6 +134,9 @@
   - 黑棋 rerank：开
   - 白棋 rerank：关
   - 对应 5 开局结果：白棋 `4胜 1负`、黑棋 `5胜 0负`
+- 最近已经验证：
+  - 几轮“白棋开局专用结构分 / opening probe”实验虽然能修正局部 case 排序，但都会让 5-opening 白棋整体回归退化
+  - 因此这些实验目前都已回退，不在主线中生效
 - 所以当前不能简单“全关 rerank”，也不该继续默认“黑白都开 rerank”：
   - rerank 确实会误伤某些白棋边界局面
   - 但它同时对黑棋整体强度贡献很大
