@@ -42,6 +42,9 @@ _EARLY_ROOT_RERANK_STABILIZER_TOP_K = 3
 _EARLY_ROOT_RERANK_LAMBDA_MAX = 0.8
 _EARLY_ROOT_RERANK_LAMBDA_AVG = 0.2
 _EARLY_ROOT_RERANK_ENABLED = True
+_EARLY_ROOT_RERANK_BLACK_ENABLED = True
+_EARLY_ROOT_RERANK_WHITE_ENABLED = True
+_EARLY_ROOT_RERANK_WHITE_REPLY_TOP_K = 3
 
 
 @dataclass
@@ -167,13 +170,28 @@ class AISearcher:
         ]
 
     def _should_apply_early_root_rerank(self, board: Board) -> bool:
-        return _EARLY_ROOT_RERANK_ENABLED and len(board.move_history) <= _EARLY_ROOT_RERANK_MAX_PLY
+        return (
+            _EARLY_ROOT_RERANK_ENABLED
+            and self._is_early_root_rerank_enabled_for_player()
+            and len(board.move_history) <= _EARLY_ROOT_RERANK_MAX_PLY
+        )
+
+    def _is_early_root_rerank_enabled_for_player(self) -> bool:
+        if self.ai_player == Player.BLACK:
+            return _EARLY_ROOT_RERANK_BLACK_ENABLED
+        return _EARLY_ROOT_RERANK_WHITE_ENABLED
+
+    def _early_root_rerank_reply_top_k(self) -> int:
+        if self.ai_player == Player.WHITE:
+            return _EARLY_ROOT_RERANK_WHITE_REPLY_TOP_K
+        return _EARLY_ROOT_RERANK_REPLY_TOP_K
 
     def _probe_opponent_reply_score(
         self,
         board: Board,
         candidate_move: tuple[int, int],
     ) -> dict[str, object]:
+        reply_top_k = self._early_root_rerank_reply_top_k()
         board.place(candidate_move[0], candidate_move[1], self.ai_player)
         try:
             reply_moves = self._candidate_moves(board)
@@ -189,7 +207,7 @@ class AISearcher:
             if immediate_opponent_wins:
                 replies = [
                     self._trace_move_dict(move, score=_FORCED_SCORE, tag="opponent_immediate_win")
-                    for move in immediate_opponent_wins[:_EARLY_ROOT_RERANK_REPLY_TOP_K]
+                    for move in immediate_opponent_wins[:reply_top_k]
                 ]
                 return {
                     "max_reply_score": _FORCED_SCORE,
@@ -205,7 +223,7 @@ class AISearcher:
                 None,
                 ordering_stats,
                 use_killers=False,
-            )[:_EARLY_ROOT_RERANK_REPLY_TOP_K]
+            )[:reply_top_k]
 
             reply_candidates: list[dict[str, object]] = []
             max_reply_score = -math.inf

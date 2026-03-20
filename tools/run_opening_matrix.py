@@ -7,9 +7,10 @@ Current matrix:
 - bottom-left: (10, 4)
 - bottom-right: (10, 10)
 
-The tool always runs two groups:
-- A as WHITE
-- A as BLACK
+The tool supports three modes:
+- both: run A as WHITE and A as BLACK
+- white: run only A as WHITE
+- black: run only A as BLACK
 
 Each opening is run independently, slices are checkpointed while running, and the
 final output is merged into two user-chosen JSON files.
@@ -302,15 +303,21 @@ def main() -> None:
     )
     parser.add_argument("--repo-b", type=Path, required=True, help="Repo path for zhou engine")
     parser.add_argument(
+        "--colors",
+        choices=("both", "white", "black"),
+        default="both",
+        help="Run both groups or only one color side for A",
+    )
+    parser.add_argument(
         "--output-white-json",
         type=Path,
-        required=True,
+        default=None,
         help="Final merged JSON for the A-as-WHITE run",
     )
     parser.add_argument(
         "--output-black-json",
         type=Path,
-        required=True,
+        default=None,
         help="Final merged JSON for the A-as-BLACK run",
     )
     parser.add_argument("--depth-a", type=int, default=5)
@@ -332,30 +339,45 @@ def main() -> None:
     white_group = GroupSpec(depth_a=args.depth_a, depth_b=args.depth_b, a_color="WHITE")
     black_group = GroupSpec(depth_a=args.depth_a, depth_b=args.depth_b, a_color="BLACK")
 
-    default_slices_dir = args.output_white_json.resolve().parent / ".opening_matrix_slices"
+    if args.colors in {"both", "white"} and args.output_white_json is None:
+        parser.error("--output-white-json is required when --colors includes white")
+    if args.colors in {"both", "black"} and args.output_black_json is None:
+        parser.error("--output-black-json is required when --colors includes black")
+
+    slice_anchor = (
+        args.output_white_json
+        if args.output_white_json is not None
+        else args.output_black_json
+    )
+    assert slice_anchor is not None
+    default_slices_dir = slice_anchor.resolve().parent / ".opening_matrix_slices"
     slices_dir = args.slices_dir.resolve() if args.slices_dir is not None else default_slices_dir
     slices_dir.mkdir(parents=True, exist_ok=True)
 
-    _run_group(
-        repo_a=repo_a,
-        repo_b=repo_b,
-        openings=openings,
-        group=white_group,
-        output_path=args.output_white_json.resolve(),
-        max_moves=args.max_moves,
-        parallel=parallel,
-        slices_dir=slices_dir,
-    )
-    _run_group(
-        repo_a=repo_a,
-        repo_b=repo_b,
-        openings=openings,
-        group=black_group,
-        output_path=args.output_black_json.resolve(),
-        max_moves=args.max_moves,
-        parallel=parallel,
-        slices_dir=slices_dir,
-    )
+    if args.colors in {"both", "white"}:
+        assert args.output_white_json is not None
+        _run_group(
+            repo_a=repo_a,
+            repo_b=repo_b,
+            openings=openings,
+            group=white_group,
+            output_path=args.output_white_json.resolve(),
+            max_moves=args.max_moves,
+            parallel=parallel,
+            slices_dir=slices_dir,
+        )
+    if args.colors in {"both", "black"}:
+        assert args.output_black_json is not None
+        _run_group(
+            repo_a=repo_a,
+            repo_b=repo_b,
+            openings=openings,
+            group=black_group,
+            output_path=args.output_black_json.resolve(),
+            max_moves=args.max_moves,
+            parallel=parallel,
+            slices_dir=slices_dir,
+        )
 
 
 if __name__ == "__main__":
