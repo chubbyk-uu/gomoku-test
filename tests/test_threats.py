@@ -1,6 +1,12 @@
 """Tests for threat classification."""
 
-from gomoku.ai.threats import ThreatType, classify_move, classify_moves
+from gomoku.ai.threats import (
+    ThreatType,
+    classify_attack_moves,
+    classify_defense_moves,
+    classify_move,
+    classify_moves,
+)
 from gomoku.board import Board
 from gomoku.config import Player
 
@@ -91,3 +97,35 @@ def test_classify_moves_returns_matching_infos():
 
     assert infos[0].threat_type == ThreatType.WIN
     assert infos[1].threat_type in {ThreatType.HALF_FOUR, ThreatType.OPEN_THREE, ThreatType.OTHER}
+
+
+def test_classify_attack_moves_matches_fallback_when_native_disabled(monkeypatch):
+    board = Board()
+    board.place(7, 6, Player.BLACK)
+    board.place(7, 7, Player.BLACK)
+    board.place(7, 8, Player.BLACK)
+    moves = [(7, 5), (7, 9), (6, 7), (8, 7)]
+
+    native = classify_attack_moves(board, moves, Player.BLACK)
+
+    monkeypatch.setattr("gomoku.ai.threats._quick_pattern_summary_native", None)
+    monkeypatch.setattr("gomoku.ai.threats._quick_pattern_summaries_native", None)
+    fallback = classify_attack_moves(board, moves, Player.BLACK)
+
+    assert native == fallback
+
+
+def test_classify_defense_moves_matches_fallback_when_native_disabled(monkeypatch):
+    board = Board()
+    board.place(7, 6, Player.BLACK)
+    board.place(7, 7, Player.BLACK)
+    board.place(7, 8, Player.BLACK)
+    moves = [(7, 5), (7, 9), (6, 7), (8, 7)]
+
+    native = classify_defense_moves(board, moves, Player.WHITE)
+
+    monkeypatch.setattr("gomoku.ai.threats._quick_pattern_summary_native", None)
+    monkeypatch.setattr("gomoku.ai.threats._quick_pattern_summaries_native", None)
+    fallback = classify_defense_moves(board, moves, Player.WHITE)
+
+    assert native == fallback

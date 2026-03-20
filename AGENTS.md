@@ -55,9 +55,11 @@
 当前本地可确认状态：
 
 - `gomoku-test` 当前分支：`master`
-- `pytest -q` -> `129 passed`
+- `pytest -q` -> `139 passed`
 - `TT` 根节点一致性问题已修：根 TT 条目会和最终 root 决策对齐
 - root rerank probe 与 `killer` 已解耦：probe 的 reply / stabilizer 排序不再复用主搜索 killer 历史
+- `native / fallback` 关键语义已对齐：不应再因为是否编译原生扩展而改变 `VCF` 攻击候选集合或 `prefilter` 顺序
+- `VCF` 已有结构化 trace：`VCFSolver.last_trace`
 - 当前 `search` 已直接跟随 `Board.get_candidate_moves()`；修改 `AI_CANDIDATE_RANGE` 会真实影响搜索候选宽度
 
 说明：
@@ -86,9 +88,11 @@
 - 修完后，白棋 fixed opening matrix 仍然会出现明显簇状分界，但分歧点被收缩到了更具体的位置。
 - 当前代表性白棋赢簇和输簇，在前 5 手归一化后完全一致。
 - 第一次关键分歧出现在第 6 手，且 `trace.source` 是 `vcf_block`。
+- 当前代表性赢簇 / 输簇在第 6 手前，顶层 `VCF` 都会看到一对归一化等价强攻；问题不是“只有一个正确防点”。
+- 现在已经进一步确认：`_generate_blocking_moves()` 会把两个几乎等价的可行防点排成不同顺序，而 `find_blocking_move()` 使用“首个成功即返回”，会把这个小排序差异直接放大成不同主线。
 - 因此，当前最该查的问题不再是“root rerank 是否复用 killer”，而是：
-  - 为什么白棋在靠边 opening 簇上，会在第 6 手 `vcf_block` 分成两条不同主线
-  - 这个分歧是由模拟分支边界效应、VCF 候选生成 / 排序 / 截断，还是其他固定棋盘偏置导致
+  - 为什么白棋在靠边 opening 簇上，会在第 6 手 `vcf_block` 优先选到后续更差的可行防点
+  - 当前 `vcf_block` 多解 tie-break 应该如何从“首个成功即返回”改成更稳的二次选择
 
 额外说明：
 
@@ -102,10 +106,11 @@
 
 1. 复现当前白棋赢簇 / 输簇的归一化代表局面
 2. 对比它们在第 6 手 `vcf_block` 的内部候选、返回理由和 trace
-3. 判断分歧是否来自模拟分支边界效应
-4. 判断分歧是否来自 VCF 候选生成 / 排序 / 截断
-5. 只在拿到这一步证据后，再决定要不要处理 `center_bias` 或其他固定棋盘偏置
-6. 最后再看更大规模 benchmark、速度、节点数、耗时
+3. 优先验证 `find_blocking_move()` 的“首个成功即返回”是否在多解局面上选错后续主线
+4. 若成立，则先把 `vcf_block` 改成“收集全部可行防点后再选”
+5. 再判断分歧里是否还有模拟分支边界效应或其他固定棋盘偏置
+6. 只在拿到这一步证据后，再决定要不要处理 `center_bias`
+7. 最后再看更大规模 benchmark、速度、节点数、耗时
 
 如果某个结论无法落到“具体 opening 簇、具体手数、具体 trace.source、具体候选列表”，就还不够强。
 
@@ -139,6 +144,12 @@
 3. 候选排序质量
 4. 评估函数对关键开局形状的价值表达
 5. 性能优化
+
+当前热点分析已确认：
+
+- 现有 `VCF` benchmark 下，最重的不是 `prefilter`，而是 `immediate_win_checks`
+- 第二热点是 `classify_attack_moves()` / exact classification
+- 所以后续提速优先看 `_find_immediate_wins()` 与 `classify_attack_moves()` / `_count_shapes_after_move()`，不要再让 `prefilter` 承担近似剪枝语义
 
 不优先改：
 

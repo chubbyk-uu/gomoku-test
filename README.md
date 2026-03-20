@@ -11,10 +11,11 @@
 - 支持独立 `VCF` benchmark / profiling
 - 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + symmetric early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
-- 当前测试状态：`pytest -q` -> `129 passed`
+- 当前测试状态：`pytest -q` -> `139 passed`
 - 当前已修复两个重要 correctness / probe 问题：
   - 根节点 `TT` 条目与最终 root 决策不一致
   - root rerank probe 错误复用 `killer` 历史
+- 当前已确认：`native / fallback` 的关键语义已对齐，编不编原生扩展不应改变 `VCF` 攻击候选集合或 `prefilter` 顺序
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
@@ -64,7 +65,8 @@
 
 - 白棋代表性赢簇和输簇前 5 手归一化后完全一致。
 - 第一次关键分歧出现在第 6 手，且 `trace.source = vcf_block`。
-- 当前下一步最该查的是：为什么白棋在靠边 opening 簇上会在第 6 手 `vcf_block` 分成两条不同主线。
+- 当前已经进一步确认：第 6 手前两边顶层 `VCF` 都能看到一对归一化等价强攻，问题不是“只有一个正确防点”。
+- 当前最重要的结构性嫌疑是：`find_blocking_move()` 采用“首个成功即返回”，会把 `_generate_blocking_moves()` 里很小的排序差异直接放大成不同主线。
 
 补充说明：
 
@@ -191,11 +193,19 @@ AI 搜索器位于 [src/gomoku/ai/searcher.py](/home/jerry/python-test/gomoku/go
 - 原生批量一步成五检测复用
 - `Cython` 原生预筛 `vcf_move_probes`
 - 独立 `VCFStats` profiling 统计
+- 结构化 `VCF` trace（`VCFSolver.last_trace`）
 
 当前 `VCF` 采用“两段式”：
 
 - 先用局部原生 probe / threat analysis 拿到强攻种子
 - 再对候选真实落子，验证是否直接赢或制造下一步立即赢
+
+当前排查白棋关键分歧时，`VCF trace` 会记录：
+
+- 顶层攻击 `prefilter` / classification / strong attack shortlist
+- `vcf_block` 的 defense candidates
+- 每个 defense move 的验证结果
+- 最终选中的防点
 
 ### 评估函数
 
@@ -331,6 +341,12 @@ PYTHONPATH=src python tools/run_vcf_benchmark.py --depth 8 --repeat 10 --mode bl
 - `classify`
 - `immediate`
 - `depth`
+
+当前热点结论：
+
+- 最重的不是 `prefilter`，而是 `immediate_win_checks`
+- 第二热点是 `classify_attack_moves()` / exact classification
+- 所以后续提速优先级应放在 `_find_immediate_wins()` 与 exact classification，而不是让 `prefilter` 承担近似剪枝
 
 ## 自对弈 Benchmark
 

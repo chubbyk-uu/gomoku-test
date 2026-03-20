@@ -56,11 +56,13 @@ class VCFSolver:
         self.max_candidates = max_candidates
         self._tt: dict[tuple[int, int, int], Optional[Move]] = {}
         self.last_stats = VCFStats()
+        self.last_trace: dict[str, object] | None = None
 
     def reset(self) -> None:
         """Reset per-search caches and stats."""
         self._tt.clear()
         self.last_stats = VCFStats()
+        self.last_trace = None
 
     def find_winning_move(
         self,
@@ -71,9 +73,16 @@ class VCFSolver:
         """Return a VCF winning move for ``attacker`` if one can be proven."""
         self.reset()
         self.last_stats.mode = "win"
+        self.last_trace = {
+            "mode": "win",
+            "actor": attacker.name,
+            "max_depth": max_depth,
+        }
         started_at = time.perf_counter()
         move = self._find_vcf_move(board, attacker, max_depth)
         self.last_stats.elapsed_s = time.perf_counter() - started_at
+        if self.last_trace is not None:
+            self.last_trace["selected_move"] = list(move) if move is not None else None
         return move
 
     def find_blocking_move(
@@ -87,25 +96,68 @@ class VCFSolver:
         self.last_stats.mode = "block"
         started_at = time.perf_counter()
         attacker = self._opponent_of(defender)
+        self.last_trace = {
+            "mode": "block",
+            "actor": defender.name,
+            "attacker": attacker.name,
+            "max_depth": max_depth,
+            "defense_candidates": [],
+            "defense_checks": [],
+        }
         if self._has_vcf(board, attacker, max_depth) is None:
             self.last_stats.elapsed_s = time.perf_counter() - started_at
+            if self.last_trace is not None:
+                self.last_trace["selected_move"] = None
             return None
 
         defenses = self._generate_blocking_moves(board, defender)
         self.last_stats.defense_candidates += len(defenses)
+        if self.last_trace is not None:
+            self.last_trace["defense_candidates"] = [list(move) for move in defenses]
         for row, col in defenses:
             board.place(row, col, defender)
             try:
                 if board.check_win(row, col):
+                    if self.last_trace is not None:
+                        checks = self.last_trace["defense_checks"]
+                        assert isinstance(checks, list)
+                        checks.append(
+                            {
+                                "move": [row, col],
+                                "wins_immediately": True,
+                                "remaining_vcf_move": None,
+                                "accepted": True,
+                            }
+                        )
+                        self.last_trace["selected_move"] = [row, col]
                     self.last_stats.elapsed_s = time.perf_counter() - started_at
                     return (row, col)
                 self._tt.clear()
-                if self._has_vcf(board, attacker, max(max_depth - 1, 0)) is None:
+                remaining_vcf = self._has_vcf(board, attacker, max(max_depth - 1, 0))
+                accepted = remaining_vcf is None
+                if self.last_trace is not None:
+                    checks = self.last_trace["defense_checks"]
+                    assert isinstance(checks, list)
+                    checks.append(
+                        {
+                            "move": [row, col],
+                            "wins_immediately": False,
+                            "remaining_vcf_move": (
+                                None if remaining_vcf is None else [remaining_vcf[0], remaining_vcf[1]]
+                            ),
+                            "accepted": accepted,
+                        }
+                    )
+                if accepted:
+                    if self.last_trace is not None:
+                        self.last_trace["selected_move"] = [row, col]
                     self.last_stats.elapsed_s = time.perf_counter() - started_at
                     return (row, col)
             finally:
                 board.undo()
         self.last_stats.elapsed_s = time.perf_counter() - started_at
+        if self.last_trace is not None:
+            self.last_trace["selected_move"] = None
         return None
 
     def _find_vcf_move(
@@ -201,6 +253,11 @@ class VCFSolver:
                 break
 
         self.last_stats.attack_candidates += len(forcing)
+        if self.last_trace is not None and "top_level_attacks" not in self.last_trace:
+            self.last_trace["top_level_attacks"] = {
+                "forcing_moves": [list(move) for move in forcing],
+                "max_candidates": self.max_candidates,
+            }
         return forcing
 
     def _generate_forced_defenses(
@@ -293,6 +350,40 @@ class VCFSolver:
         is_open = 0 <= r < grid.shape[0] and 0 <= c < grid.shape[1] and grid[r, c] == Player.NONE
         return length, is_open
 
+    def _quick_pattern_summary(
+        self,
+        board: Board,
+        row: int,
+        col: int,
+        player: Player,
+    ) -> tuple[bool, bool, bool]:
+        if board.grid[row, col] != Player.NONE:
+            return False, False, False
+
+        has_immediate_threat = False
+        has_potential = False
+        promising_directions = 0
+        for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
+            left_len, left_open = self._count_one_side(board, row, col, -dr, -dc, player)
+            right_len, right_open = self._count_one_side(board, row, col, dr, dc, player)
+            total_len = 1 + left_len + right_len
+            open_ends = int(left_open) + int(right_open)
+
+            if total_len >= 5:
+                return True, False, False
+            if total_len == 4 and open_ends == 2:
+                return False, True, False
+            if total_len == 4 and open_ends == 1:
+                has_immediate_threat = True
+            if total_len == 3 and open_ends >= 1:
+                has_immediate_threat = True
+            if total_len >= 2:
+                promising_directions += 1
+            if total_len >= 3 and open_ends >= 1:
+                has_potential = True
+
+        return False, False, has_immediate_threat or has_potential or promising_directions >= 2
+
     def _analyze_move_for_player(
         self,
         board: Board,
@@ -355,6 +446,26 @@ class VCFSolver:
             key=lambda item: (item[1], item[2], item[0][0], item[0][1]),
             reverse=True,
         )
+        if self.last_trace is not None and "top_level_attack_classification" not in self.last_trace:
+            self.last_trace["top_level_attack_classification"] = {
+                "prefiltered_moves": [list(move) for move in moves],
+                "classified_moves": [
+                    {
+                        "move": [info.move[0], info.move[1]],
+                        "attack_type": info.attack_type.name,
+                        "attack_score": info.attack_score,
+                    }
+                    for info in classified
+                ],
+                "strong_attacks": [
+                    {
+                        "move": [move[0], move[1]],
+                        "priority": priority,
+                        "attack_score": score,
+                    }
+                    for move, priority, score in forcing
+                ],
+            }
         return forcing
 
     def _prefilter_attack_moves(
@@ -362,41 +473,80 @@ class VCFSolver:
         board: Board,
         attacker: Player,
     ) -> list[Move]:
-        """Return a narrowed candidate set before exact VCF classification.
+        """Return attack candidates before exact VCF classification.
 
-        The native path uses a cheap local probe to keep only moves that look
-        tactically relevant. Exact threat typing still happens in Python so the
-        VCF semantics stay easy to reason about and test.
+        Native probes may reprioritize obviously tactical moves, but they must
+        not change the candidate set itself. Exact threat typing still happens
+        in Python so the VCF semantics stay easy to reason about and test.
         """
         moves = board.get_candidate_moves()
         if not moves:
             return []
 
-        if _vcf_move_probes_native is None:
-            self.last_stats.prefiltered_moves += len(moves)
-            return moves
+        if _vcf_move_probes_native is not None:
+            probes = _vcf_move_probes_native(board.grid, moves, int(attacker))
+        else:
+            probes = self._python_vcf_move_probes(board, moves, attacker)
 
-        probes = _vcf_move_probes_native(board.grid, moves, int(attacker))
-        shortlisted: list[tuple[int, int, int, int]] = []
-        for row_col, (is_win, is_open_four, has_potential, score) in zip(
-            moves, probes, strict=False
-        ):
+        hinted = self._prioritize_attack_moves(moves, probes)
+        self.last_stats.prefiltered_moves += len(hinted)
+        if len(hinted) == len(moves):
+            return hinted
+
+        hinted_set = set(hinted)
+        remainder = [move for move in moves if move not in hinted_set]
+        return hinted + remainder
+
+    def _python_vcf_move_probes(
+        self,
+        board: Board,
+        moves: list[Move],
+        attacker: Player,
+    ) -> list[tuple[bool, bool, bool, int]]:
+        probes: list[tuple[bool, bool, bool, int]] = []
+        for row, col in moves:
+            if board.grid[row, col] != Player.NONE:
+                probes.append((False, False, False, -1))
+                continue
+
+            is_win, is_open_four, has_potential = self._quick_pattern_summary(
+                board, row, col, attacker
+            )
             if is_win:
-                shortlisted.append((5, int(score), row_col[0], row_col[1]))
+                probes.append((True, False, False, 200_000))
                 continue
             if is_open_four:
-                shortlisted.append((4, int(score), row_col[0], row_col[1]))
+                _is_force, score = self._analyze_move_for_player(board, row, col, attacker)
+                probes.append((False, True, False, int(score)))
                 continue
-            if has_potential and int(score) >= 2_000:
-                shortlisted.append((1, int(score), row_col[0], row_col[1]))
+            if has_potential:
+                _is_force, score = self._analyze_move_for_player(board, row, col, attacker)
+                probes.append((False, False, True, int(score)))
+                continue
+            probes.append((False, False, False, 0))
+        return probes
 
-        if not shortlisted:
-            return []
+    @staticmethod
+    def _prioritize_attack_moves(
+        moves: list[Move],
+        probes: list[tuple[bool, bool, bool, int]],
+    ) -> list[Move]:
+        prioritized: list[tuple[int, int, int, int]] = []
+        for index, (row_col, (is_win, is_open_four, has_potential, score)) in enumerate(
+            zip(moves, probes, strict=False)
+        ):
+            if is_win:
+                priority = 5
+            elif is_open_four:
+                priority = 4
+            elif has_potential and int(score) >= 2_000:
+                priority = 1
+            else:
+                continue
+            prioritized.append((priority, int(score), -index, index))
 
-        shortlisted.sort(reverse=True)
-        limit = min(len(shortlisted), max(self.max_candidates * 3, self.max_candidates))
-        self.last_stats.prefiltered_moves += min(len(shortlisted), limit)
-        return [(row, col) for _, _, row, col in shortlisted[:limit]]
+        prioritized.sort(reverse=True)
+        return [moves[index] for _, _, _, index in prioritized]
 
     def _find_immediate_wins(
         self,

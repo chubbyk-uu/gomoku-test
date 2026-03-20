@@ -33,6 +33,11 @@ def test_vcf_finds_winning_move_without_mutating_board():
     assert move == (7, 3)
     assert board.move_history == history_before
     assert board.hash == hash_before
+    assert solver.last_trace is not None
+    assert solver.last_trace["mode"] == "win"
+    assert solver.last_trace["selected_move"] == [7, 3]
+    assert "top_level_attack_classification" in solver.last_trace
+    assert "top_level_attacks" in solver.last_trace
 
 
 def test_vcf_finds_blocking_move_without_mutating_board():
@@ -46,6 +51,13 @@ def test_vcf_finds_blocking_move_without_mutating_board():
     assert move == (7, 3)
     assert board.move_history == history_before
     assert board.hash == hash_before
+    assert solver.last_trace is not None
+    assert solver.last_trace["mode"] == "block"
+    assert solver.last_trace["selected_move"] == [7, 3]
+    assert "defense_candidates" in solver.last_trace
+    assert "defense_checks" in solver.last_trace
+    assert solver.last_trace["defense_checks"]
+    assert solver.last_trace["defense_checks"][0]["accepted"] is True
 
 
 def test_vcf_returns_none_when_position_has_no_forced_four_chain():
@@ -57,6 +69,9 @@ def test_vcf_returns_none_when_position_has_no_forced_four_chain():
 
     assert solver.find_winning_move(board, Player.WHITE, max_depth=8) is None
     assert solver.find_blocking_move(board, Player.WHITE, max_depth=8) is None
+    assert solver.last_trace is not None
+    assert solver.last_trace["mode"] == "block"
+    assert solver.last_trace["selected_move"] is None
 
 
 def test_generate_forced_defenses_only_returns_immediate_winning_responses(monkeypatch):
@@ -124,7 +139,47 @@ def test_prefilter_attack_moves_uses_native_vcf_probes(monkeypatch):
 
     moves = solver._prefilter_attack_moves(board, Player.WHITE)
 
-    assert moves == [(7, 8), (8, 7), (6, 7)]
+    assert moves == [(7, 8), (8, 7), (6, 7), (6, 6), (8, 8)]
+
+
+def test_prefilter_attack_moves_keeps_candidate_set_without_native_probes(monkeypatch):
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    solver = VCFSolver(max_candidates=4)
+    fixed_moves = [(6, 6), (6, 7), (7, 8), (8, 7), (8, 8)]
+
+    monkeypatch.setattr(board, "get_candidate_moves", lambda: fixed_moves)
+    monkeypatch.setattr(
+        "gomoku.ai.vcf._vcf_move_probes_native",
+        lambda _grid, _moves, _player: [
+            (False, False, False, 0),
+            (False, False, True, 3_000),
+            (True, False, False, 200_000),
+            (False, True, False, 30_000),
+            (False, False, True, 1_000),
+        ],
+    )
+
+    native_moves = solver._prefilter_attack_moves(board, Player.WHITE)
+
+    monkeypatch.setattr("gomoku.ai.vcf._vcf_move_probes_native", None)
+    fallback_moves = solver._prefilter_attack_moves(board, Player.WHITE)
+
+    assert set(native_moves) == set(fallback_moves) == set(fixed_moves)
+
+
+def test_prefilter_attack_moves_matches_python_probe_order(monkeypatch):
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    board.place(7, 8, Player.WHITE)
+    solver = VCFSolver(max_candidates=8)
+
+    native_moves = solver._prefilter_attack_moves(board, Player.WHITE)
+
+    monkeypatch.setattr("gomoku.ai.vcf._vcf_move_probes_native", None)
+    fallback_moves = solver._prefilter_attack_moves(board, Player.WHITE)
+
+    assert native_moves == fallback_moves
 
 
 def test_generate_vcf_attacks_only_keeps_moves_with_real_follow_up(monkeypatch):
@@ -175,3 +230,60 @@ def test_generate_blocking_moves_falls_back_to_hotness_ordering(monkeypatch):
     )
 
     assert solver._generate_blocking_moves(board, Player.WHITE) == [(7, 7), (7, 8), (8, 8)]
+
+
+def test_vcf_find_winning_move_matches_fallback_when_native_disabled(monkeypatch):
+    board = _vcf_white_winning_board()
+    solver = VCFSolver()
+
+    native_move = solver.find_winning_move(board, Player.WHITE, max_depth=8)
+
+    monkeypatch.setattr("gomoku.ai.vcf._vcf_move_probes_native", None)
+    monkeypatch.setattr("gomoku.ai.vcf._analyze_moves_native", None)
+    fallback_move = solver.find_winning_move(board, Player.WHITE, max_depth=8)
+
+    assert native_move == fallback_move == (7, 3)
+
+
+def test_vcf_find_blocking_move_matches_fallback_when_native_disabled(monkeypatch):
+    board = _vcf_black_winning_board()
+    solver = VCFSolver()
+
+    native_move = solver.find_blocking_move(board, Player.WHITE, max_depth=8)
+
+    monkeypatch.setattr("gomoku.ai.vcf._vcf_move_probes_native", None)
+    monkeypatch.setattr("gomoku.ai.vcf._analyze_moves_native", None)
+    fallback_move = solver.find_blocking_move(board, Player.WHITE, max_depth=8)
+
+    assert native_move == fallback_move == (7, 3)
+
+
+def test_vcf_block_trace_records_each_defense_check(monkeypatch):
+    board = _vcf_black_winning_board()
+    solver = VCFSolver()
+
+    monkeypatch.setattr(
+        solver,
+        "_generate_blocking_moves",
+        lambda *_args, **_kwargs: [(7, 2), (7, 3), (7, 4)],
+    )
+
+    move = solver.find_blocking_move(board, Player.WHITE, max_depth=8)
+
+    assert move == (7, 3)
+    assert solver.last_trace is not None
+    checks = solver.last_trace["defense_checks"]
+    assert checks == [
+        {
+            "move": [7, 2],
+            "wins_immediately": False,
+            "remaining_vcf_move": [7, 3],
+            "accepted": False,
+        },
+        {
+            "move": [7, 3],
+            "wins_immediately": False,
+            "remaining_vcf_move": None,
+            "accepted": True,
+        },
+    ]

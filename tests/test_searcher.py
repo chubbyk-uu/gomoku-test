@@ -140,6 +140,32 @@ def test_local_hotness_falls_back_to_python_when_native_unavailable(monkeypatch)
     )
 
 
+def test_find_best_move_matches_fallback_when_native_disabled(monkeypatch):
+    board = Board()
+    for move in [
+        (7, 7, Player.BLACK),
+        (7, 8, Player.WHITE),
+        (6, 7, Player.BLACK),
+        (8, 8, Player.WHITE),
+        (6, 8, Player.BLACK),
+    ]:
+        board.place(*move)
+
+    native_searcher = _make_searcher(ai_player=Player.WHITE, depth=2)
+    native_move = native_searcher.find_best_move(board)
+
+    monkeypatch.setattr(searcher_module, "_analyze_move_native", None)
+    monkeypatch.setattr(searcher_module, "_analyze_moves_native", None)
+    monkeypatch.setattr(searcher_module, "_local_hotness_native", None)
+    monkeypatch.setattr("gomoku.ai.vcf._analyze_moves_native", None)
+    monkeypatch.setattr("gomoku.ai.vcf._vcf_move_probes_native", None)
+
+    fallback_searcher = _make_searcher(ai_player=Player.WHITE, depth=2)
+    fallback_move = fallback_searcher.find_best_move(board)
+
+    assert native_move == fallback_move
+
+
 def test_find_best_move_does_not_modify_board():
     """find_best_move 不应改变传入棋盘的状态。"""
     board = Board()

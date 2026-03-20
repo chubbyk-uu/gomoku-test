@@ -264,6 +264,26 @@ def test_match_half_two_jump():
     assert counts[Shape.HALF_TWO] >= 1
 
 
+def test_evaluate_matches_fallback_when_native_disabled(monkeypatch):
+    board = Board()
+    for move in [
+        (7, 6, Player.BLACK),
+        (7, 7, Player.BLACK),
+        (7, 8, Player.BLACK),
+        (6, 7, Player.WHITE),
+        (8, 7, Player.WHITE),
+        (6, 6, Player.BLACK),
+    ]:
+        board.place(*move)
+
+    native = evaluate(board, Player.BLACK)
+
+    monkeypatch.setattr("gomoku.ai.evaluator._count_shapes_on_line_native", None)
+    fallback = evaluate(board, Player.BLACK)
+
+    assert native == fallback
+
+
 def test_count_shapes_after_move_matches_place_and_recount():
     board = _board_with_pieces(
         [

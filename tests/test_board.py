@@ -128,6 +128,24 @@ def test_check_win_falls_back_to_python_when_native_unavailable(monkeypatch):
     assert board.check_win(4, 0) == board._check_win_python(4, 0)
 
 
+def test_candidate_moves_radius_one_matches_fallback_when_native_disabled(monkeypatch):
+    board_module = importlib.import_module("gomoku.board")
+    with monkeypatch.context() as patch:
+        patch.setattr("gomoku.config.AI_CANDIDATE_RANGE", 1)
+        board_module = importlib.reload(board_module)
+
+        board = board_module.Board()
+        board.place(7, 7, Player.BLACK)
+        native_moves = board.get_candidate_moves()
+
+        patch.setattr("gomoku.board._candidate_moves_radius1_native", None)
+        fallback_moves = board.get_candidate_moves()
+
+        assert native_moves == fallback_moves
+
+    importlib.reload(board_module)
+
+
 # ---------------------------------------------------------------------------
 # get_candidate_moves
 # ---------------------------------------------------------------------------
