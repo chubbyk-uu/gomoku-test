@@ -7,14 +7,14 @@
 目标是提升真实棋力，在可复现的 head-to-head 测试里尽可能稳定地战胜同级目录下的 `zhou`，以及后续其他五子棋 AI：
 
 - 当前仓库：`/home/jerry/python-test/gomoku/gomoku-test`
-- 对手引擎：`/home/jerry/python-test/gomoku/zhou`
+- 对手引擎：`/home/jerry/python-test/gomoku/gomoku-test/opponent/zhou`
 
 硬约束：
 
 - 不把 `opening book` / 手工开局特判作为主要修复手段。
 - 优先修根因，不做只掩盖失败现象的补丁。
 - `zhou` 基线固定为 `depth=5`。
-- `gomoku-test` 正式对抗深度可以是可变，默认 `5`。
+- `gomoku-test` 正式对抗深度可变，默认 `5`。
 - 关键开局线上，`depth=5` 不能比 `depth=4` 退化。
 - “成功”指棋力变强，不是只变快，也不是只让 benchmark 形态更好看。
 

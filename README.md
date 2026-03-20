@@ -481,7 +481,6 @@ PYTHONPATH=src python tools/run_benchmark.py \
 
 ```bash
 PYTHONPATH=src python tools/run_opening_matrix.py \
-  --repo-b /home/jerry/python-test/gomoku/zhou \
   --output-white-json benchmark_records/white_5_openings.json \
   --output-black-json benchmark_records/black_5_openings.json
 ```
