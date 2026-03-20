@@ -203,6 +203,7 @@ class AISearcher:
                 1,
                 None,
                 ordering_stats,
+                use_killers=False,
             )[:_EARLY_ROOT_RERANK_REPLY_TOP_K]
 
             reply_candidates: list[dict[str, object]] = []
@@ -230,6 +231,7 @@ class AISearcher:
                                 1,
                                 None,
                                 ordering_stats,
+                                use_killers=False,
                             )[:_EARLY_ROOT_RERANK_STABILIZER_TOP_K]
                             best_white_reply_eval = -math.inf
                             stabilizer_candidates = []
@@ -463,6 +465,7 @@ class AISearcher:
                 best_move = move
             best_score = score
             best_root_candidates = root_candidates
+            self._sync_root_tt_best_move(board, current_depth, best_move)
 
             if abs(score) >= _FORCED_SCORE:
                 break
@@ -513,6 +516,23 @@ class AISearcher:
         if len(tt) >= AI_TT_MAX_SIZE:
             tt.clear()
         tt[h] = entry
+
+    def _sync_root_tt_best_move(
+        self,
+        board: Board,
+        depth: int,
+        best_move: Optional[tuple[int, int]],
+    ) -> None:
+        """Keep the root TT best move aligned with the final root decision."""
+        if best_move is None:
+            return
+        entry = self._tt.get(board.hash)
+        if entry is None:
+            return
+        tt_depth, tt_score, tt_flag, _ = entry
+        if tt_depth != depth:
+            return
+        self._store_tt(self._tt, board.hash, (tt_depth, tt_score, tt_flag, best_move))
 
     def _check_timeout(self) -> None:
         """Raise when the configured time budget has been exhausted."""
@@ -652,9 +672,11 @@ class AISearcher:
         depth: int,
         tt_move: Optional[tuple[int, int]],
         stats: SearchStats,
+        *,
+        use_killers: bool = True,
     ) -> list[tuple[int, int]]:
         """Order recursive moves by TT, killers, and local tactical hotness."""
-        killers = set(self._killers.get(depth, []))
+        killers = set(self._killers.get(depth, [])) if use_killers else set()
         priority: list[tuple[int, int]] = []
         normal: list[tuple[int, int]] = []
         for move in moves:

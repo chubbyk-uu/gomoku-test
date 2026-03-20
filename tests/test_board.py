@@ -164,19 +164,21 @@ def test_candidate_moves_no_duplicates():
 
 
 def test_candidate_moves_respect_configured_range(monkeypatch):
-    monkeypatch.setattr("gomoku.config.AI_CANDIDATE_RANGE", 1)
     board_module = importlib.import_module("gomoku.board")
+    with monkeypatch.context() as patch:
+        patch.setattr("gomoku.config.AI_CANDIDATE_RANGE", 1)
+        board_module = importlib.reload(board_module)
+
+        board = board_module.Board()
+        board.place(7, 7, Player.BLACK)
+        moves = set(board.get_candidate_moves())
+
+        assert (7, 9) not in moves
+        assert (9, 7) not in moves
+        assert board_module.AI_CANDIDATE_RANGE == 1
+
     board_module = importlib.reload(board_module)
-
-    board = board_module.Board()
-    board.place(7, 7, Player.BLACK)
-    moves = set(board.get_candidate_moves())
-
-    assert (7, 9) not in moves
-    assert (9, 7) not in moves
-
-    board_module = importlib.reload(board_module)
-    assert board_module.AI_CANDIDATE_RANGE == 1
+    assert board_module.AI_CANDIDATE_RANGE == AI_CANDIDATE_RANGE
 
 
 # ---------------------------------------------------------------------------
