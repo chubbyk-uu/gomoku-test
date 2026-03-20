@@ -286,4 +286,64 @@ def test_vcf_block_trace_records_each_defense_check(monkeypatch):
             "remaining_vcf_move": None,
             "accepted": True,
         },
+        {
+            "move": [7, 4],
+            "wins_immediately": False,
+            "remaining_vcf_move": [7, 3],
+            "accepted": False,
+        },
     ]
+
+
+def test_find_blocking_move_collects_all_safe_defenses_before_selecting(monkeypatch):
+    board = Board()
+    board.place(7, 7, Player.BLACK)
+    solver = VCFSolver()
+
+    monkeypatch.setattr(solver, "_has_vcf", lambda *_args, **_kwargs: (7, 8))
+    monkeypatch.setattr(solver, "_generate_blocking_moves", lambda *_args, **_kwargs: [(7, 5), (7, 6)])
+
+    def fake_check_win(_row, _col):
+        return False
+
+    monkeypatch.setattr(board, "check_win", fake_check_win)
+
+    def fake_has_vcf(current_board, _attacker, _depth):
+        if current_board.last_move == (7, 5):
+            return None
+        if current_board.last_move == (7, 6):
+            return None
+        return (7, 8)
+
+    monkeypatch.setattr(solver, "_has_vcf", fake_has_vcf)
+
+    def fake_find_immediate_wins(current_board, player, limit=None):
+        last_move = current_board.last_move
+        if player == Player.BLACK:
+            if last_move == (7, 5):
+                wins = [(6, 6), (8, 8)]
+            elif last_move == (7, 6):
+                wins = [(6, 6)]
+            else:
+                wins = []
+        else:
+            if last_move == (7, 5):
+                wins = [(5, 5)]
+            elif last_move == (7, 6):
+                wins = [(5, 5), (5, 6), (5, 7)]
+            else:
+                wins = []
+        return wins[:limit] if limit is not None else wins
+
+    monkeypatch.setattr(solver, "_find_immediate_wins", fake_find_immediate_wins)
+    monkeypatch.setattr(
+        "gomoku.ai.vcf.evaluate",
+        lambda current_board, _player: 10 if current_board.last_move == (7, 5) else 20,
+    )
+
+    move = solver.find_blocking_move(board, Player.WHITE, max_depth=8)
+
+    assert move == (7, 6)
+    assert solver.last_trace is not None
+    accepted = [item["move"] for item in solver.last_trace["defense_checks"] if item["accepted"]]
+    assert accepted == [[7, 6]]

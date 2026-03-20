@@ -41,6 +41,7 @@ _EARLY_ROOT_RERANK_REPLY_TOP_K = 3
 _EARLY_ROOT_RERANK_STABILIZER_TOP_K = 3
 _EARLY_ROOT_RERANK_LAMBDA_MAX = 0.8
 _EARLY_ROOT_RERANK_LAMBDA_AVG = 0.2
+_EARLY_ROOT_RERANK_ENABLED = True
 
 
 @dataclass
@@ -166,7 +167,7 @@ class AISearcher:
         ]
 
     def _should_apply_early_root_rerank(self, board: Board) -> bool:
-        return len(board.move_history) <= _EARLY_ROOT_RERANK_MAX_PLY
+        return _EARLY_ROOT_RERANK_ENABLED and len(board.move_history) <= _EARLY_ROOT_RERANK_MAX_PLY
 
     def _probe_opponent_reply_score(
         self,

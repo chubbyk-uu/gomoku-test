@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from gomoku.ai.evaluator import evaluate
 from gomoku.ai.threats import ThreatType, classify_attack_moves
 from gomoku.board import Board
 from gomoku.config import AI_VCF_MAX_CANDIDATES, Player
@@ -23,6 +24,16 @@ except ImportError:  # pragma: no cover - exercised when extension is not built
     _vcf_move_probes_native = None
 
 Move = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _SafeDefense:
+    move: Move
+    win_now: bool
+    opp_immediate_count: int
+    self_immediate_count: int
+    static_eval_after_defense: int
+    original_index: int
 
 
 @dataclass
@@ -114,51 +125,115 @@ class VCFSolver:
         self.last_stats.defense_candidates += len(defenses)
         if self.last_trace is not None:
             self.last_trace["defense_candidates"] = [list(move) for move in defenses]
-        for row, col in defenses:
+        safe_defenses = self._collect_safe_defenses(board, defender, attacker, defenses, max_depth)
+        selected = self._select_best_safe_defense(board, safe_defenses)
+        if selected is not None:
+            if self.last_trace is not None:
+                self.last_trace["selected_move"] = [selected[0], selected[1]]
+                checks = self.last_trace["defense_checks"]
+                assert isinstance(checks, list)
+                for item in checks:
+                    item["accepted"] = item["move"] == [selected[0], selected[1]]
+            self.last_stats.elapsed_s = time.perf_counter() - started_at
+            return selected
+        self.last_stats.elapsed_s = time.perf_counter() - started_at
+        if self.last_trace is not None:
+            self.last_trace["selected_move"] = None
+        return None
+
+    def _collect_safe_defenses(
+        self,
+        board: Board,
+        defender: Player,
+        attacker: Player,
+        defenses: list[Move],
+        max_depth: int,
+    ) -> list[_SafeDefense]:
+        safe_defenses: list[_SafeDefense] = []
+        reduced_depth = max(max_depth - 1, 0)
+
+        for index, (row, col) in enumerate(defenses):
             board.place(row, col, defender)
             try:
-                if board.check_win(row, col):
-                    if self.last_trace is not None:
-                        checks = self.last_trace["defense_checks"]
-                        assert isinstance(checks, list)
-                        checks.append(
-                            {
-                                "move": [row, col],
-                                "wins_immediately": True,
-                                "remaining_vcf_move": None,
-                                "accepted": True,
-                            }
-                        )
-                        self.last_trace["selected_move"] = [row, col]
-                    self.last_stats.elapsed_s = time.perf_counter() - started_at
-                    return (row, col)
-                self._tt.clear()
-                remaining_vcf = self._has_vcf(board, attacker, max(max_depth - 1, 0))
-                accepted = remaining_vcf is None
+                win_now = board.check_win(row, col)
+                remaining_vcf: Optional[Move] = None
+                if not win_now:
+                    self._tt.clear()
+                    remaining_vcf = self._has_vcf(board, attacker, reduced_depth)
+
+                is_safe = win_now or remaining_vcf is None
                 if self.last_trace is not None:
                     checks = self.last_trace["defense_checks"]
                     assert isinstance(checks, list)
                     checks.append(
                         {
                             "move": [row, col],
-                            "wins_immediately": False,
+                            "wins_immediately": win_now,
                             "remaining_vcf_move": (
                                 None if remaining_vcf is None else [remaining_vcf[0], remaining_vcf[1]]
                             ),
-                            "accepted": accepted,
+                            "accepted": False,
                         }
                     )
-                if accepted:
-                    if self.last_trace is not None:
-                        self.last_trace["selected_move"] = [row, col]
-                    self.last_stats.elapsed_s = time.perf_counter() - started_at
-                    return (row, col)
+                if not is_safe:
+                    continue
+
+                opp_immediate_count = len(self._find_immediate_wins(board, attacker))
+                self_immediate_count = len(self._find_immediate_wins(board, defender))
+                static_eval_after_defense = evaluate(board, defender)
+                safe_defenses.append(
+                    _SafeDefense(
+                        move=(row, col),
+                        win_now=win_now,
+                        opp_immediate_count=opp_immediate_count,
+                        self_immediate_count=self_immediate_count,
+                        static_eval_after_defense=static_eval_after_defense,
+                        original_index=index,
+                    )
+                )
             finally:
                 board.undo()
-        self.last_stats.elapsed_s = time.perf_counter() - started_at
-        if self.last_trace is not None:
-            self.last_trace["selected_move"] = None
-        return None
+
+        return safe_defenses
+
+    def _select_best_safe_defense(
+        self,
+        board: Board,
+        safe_defenses: list[_SafeDefense],
+    ) -> Optional[Move]:
+        if not safe_defenses:
+            return None
+        best = max(
+            safe_defenses,
+            key=lambda defense: (
+                int(defense.win_now),
+                -defense.opp_immediate_count,
+                defense.self_immediate_count,
+                defense.static_eval_after_defense,
+                *self._stable_defense_tiebreak(board, defense.move),
+                -defense.original_index,
+            ),
+        )
+        return best.move
+
+    @staticmethod
+    def _stable_defense_tiebreak(
+        board: Board,
+        move: Move,
+    ) -> tuple[int, int, int, int]:
+        row, col = move
+        center = (board.grid.shape[0] - 1) // 2
+        center_dr = abs(row - center)
+        center_dc = abs(col - center)
+        last_row, last_col = board.last_move if board.last_move is not None else (center, center)
+        last_dr = abs(row - last_row)
+        last_dc = abs(col - last_col)
+        return (
+            -max(last_dr, last_dc),
+            -(last_dr + last_dc),
+            -max(center_dr, center_dc),
+            -(center_dr + center_dc),
+        )
 
     def _find_vcf_move(
         self,

@@ -11,7 +11,7 @@
 - 支持独立 `VCF` benchmark / profiling
 - 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + symmetric early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
-- 当前测试状态：`pytest -q` -> `139 passed`
+- 当前测试状态：`pytest -q` -> `143 passed`
 - 当前已修复两个重要 correctness / probe 问题：
   - 根节点 `TT` 条目与最终 root 决策不一致
   - root rerank probe 错误复用 `killer` 历史
@@ -49,6 +49,14 @@
 
 但 fixed opening matrix 的解读方式已经更新：
 
+- 旧的 `5x5` center `25` 点矩阵仍然有研究价值，但不再适合作为默认快速基线。
+- 当前更推荐的快速固定开局集是 5 点：
+  - 天元 `(7,7)`
+  - 左上 `(4,4)`
+  - 右上 `(4,10)`
+  - 左下 `(10,4)`
+  - 右下 `(10,10)`
+
 - 黑棋在当前 `5x5` center opening matrix 上经常表现为“同一条未触边主线的平移重复”，因此 `25/25` 不能简单当成 25 个独立样本。
 - 白棋 25 盘也不是 25 个独立问题，而是少数几条归一化主线簇。
 - 当前最有价值的分析方式不是只看总胜负，而是看：
@@ -56,7 +64,7 @@
   - 第一次分歧出现在第几手
   - 分歧来自 `minimax`、`vcf_block`、`immediate_block` 还是别的阶段
 
-最近一次本地 `d5` 对 `zhou` 的 center `5x5` fixed opening matrix 结果是：
+修复 `vcf_block` 之前，center `5x5` 旧矩阵曾出现过这组结果：
 
 - 白棋：`10胜 15负 0和`
 - 黑棋：`25胜 0负 0和`
@@ -67,6 +75,61 @@
 - 第一次关键分歧出现在第 6 手，且 `trace.source = vcf_block`。
 - 当前已经进一步确认：第 6 手前两边顶层 `VCF` 都能看到一对归一化等价强攻，问题不是“只有一个正确防点”。
 - 当前最重要的结构性嫌疑是：`find_blocking_move()` 采用“首个成功即返回”，会把 `_generate_blocking_moves()` 里很小的排序差异直接放大成不同主线。
+
+修掉 `vcf_block` 的首个成功即返回之后，center `5x5` 矩阵结果变成：
+
+- 白棋：`20胜 5负 0和`
+- 黑棋：`25胜 0负 0和`
+
+当前剩余白棋失败全部收缩到最左一列 opening。进一步分析已经确认：
+
+- 左列剩余失败不再是第 6 手 `vcf_block` 分叉；代表性输局与相邻赢局前 7 手归一化后完全一致。
+- 新的首个分歧点已经推迟到第 8 手，且 `trace.source = minimax`。
+- 对左列第 8 手做强制候选实验后，`normalized (7,3)` 这条旧路在左边界下确实更差，但当前实战手也不是最优。
+- 已经找到至少一个替代候选 `normalized (4,4)`，强制该手后对白 `zhou(depth=5)` 可走成胜线。
+
+因此，当前最直接的新问题已经收敛成：
+
+- 为什么第 8 手 `minimax` 没有选到这个边界适配胜手。
+
+进一步拆第 8 手根候选后，已经确认这不是单一原因：
+
+- 原始 `depth=5 minimax` 根分数最高仍是旧路 `(7,1)`，说明主搜索本身还在高估这条靠左旧计划。
+- 已被强制实验验证可赢 `zhou` 的候选 `(4,2)`，原始根分数只排第二。
+- early root rerank 又进一步把 `(4,2)` 压到更后，最终把根决策改成 `(4,4)`。
+
+所以当前剩余主问题应拆成两层：
+
+- 原始 `minimax` 为什么仍高估 `(7,1)` 这条边界下会更快输的旧路
+- root rerank 的浅层 reply/stabilizer probe 为什么会进一步压低 `(4,2)` 这个对白 `zhou` 可赢的候选
+
+进一步分析后，当前对第 8 手的判断还可以再收缩一层：
+
+- 对 `(4,2)` 这条对白 `zhou` 可赢的线，`zhou` 黑方真实第 9 手是 `(7,4)`。
+- 我们自己的黑方原始 depth-5 根分第一也同样是 `(7,4)`。
+- 但白方 rerank probe 根本没有把 `(7,4)` 放进黑方 reply top-3，而只是看了 `local_hotness` 更靠前的几手浅层 reply。
+
+这说明当前 root rerank 的问题，不只是“把 `(4,2)` 压低”，而是：
+
+- 它对对手 reply 的 top-k 建模已经失真，漏掉了真实关键 reply。
+
+当前 5 开局快速基线（rerank 开启）结果是：
+
+- 白棋：`2胜 3负`
+- 黑棋：`5胜 0负`
+
+关闭 rerank 做对照后，5 开局会变成：
+
+- 白棋：`4胜 1负`
+- 黑棋：`2胜 3负`
+
+所以当前不能简单把 rerank 整体关掉。更准确的理解是：
+
+- rerank 对白棋某些边界局面有明显误导
+- 但它同时对黑棋整体强度贡献很大
+- 下一步应该优先修 rerank 的对手建模，而不是粗暴永久关闭
+- `25` 点 center matrix 现在更适合做归一化主线与分歧手研究
+- `5` 点固定开局集更适合做日常快速回归
 
 补充说明：
 
@@ -398,17 +461,18 @@ PYTHONPATH=src python tools/run_benchmark.py \
 
 ```bash
 PYTHONPATH=src python tools/run_opening_matrix.py \
-  --depth-a 5 \
-  --depth-b 5 \
   --repo-b /home/jerry/python-test/gomoku/zhou \
-  --progress \
-  --save-json benchmark_records/some_opening_matrix.json
+  --output-white-json benchmark_records/white_5_openings.json \
+  --output-black-json benchmark_records/black_5_openings.json
 ```
 
 说明：
 
 - `A` 是当前 `gomoku-test`
 - `B` 是 `zhou`
+- 当前工具默认跑 5 个固定 opening：天元与四角
+- 当前工具默认会把白/黑两组都跑完，并分别输出两个最终 JSON
+- 中间 slice 结果会自动清理，不需要手工合并
 - `run_benchmark.py` 更适合随机/自对弈或跨 worktree 对比
 - 当前正式结果解读，应优先看 fixed opening matrix 的归一化主线簇，再看随机对战
 
