@@ -9,7 +9,7 @@
 - 支持悔棋：一次撤回玩家和 AI 各一步
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
-- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + symmetric early root rerank`
+- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + black-only early root rerank`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
 - 当前测试状态：`pytest -q` -> `143 passed`
 - 当前已修复两个重要 correctness / probe 问题：
@@ -41,10 +41,11 @@
 
 ## 当前基线
 
-当前对 `zhou(depth=5)` 的主线配置仍然是：
+当前对 `zhou(depth=5)` 的主线配置是：
 
 - 黑白共用主搜索链：`immediate win/block -> VCF win/block -> iterative deepening minimax -> alpha-beta -> TT -> killer -> local_hotness`
-- 黑白双方早期 root 候选都启用轻量 early rerank 二次重排
+- 黑棋保留 early root rerank
+- 白棋默认关闭 early root rerank
 - 不使用 opening book / 手工特判开局
 
 但 fixed opening matrix 的解读方式已经更新：
@@ -111,21 +112,42 @@
 
 当前这一步先不再沿用任何混入归一化坐标或直接 `_minimax()` 的旧口径。后续继续分析 rerank 的对手 reply 建模时，也必须基于这同一个实际局面和同一个 depth-5 最终 root trace。
 
-当前 5 开局快速基线（rerank 开启）结果是：
+最近又坐实了一个更具体的 white-rerank 问题：
+
+- 在 `(4,4)` 这条被 rerank 抬成第一的线里，black reply `(5,7)` 之后，white stabilizer `(3,5)` / `(7,1)` 会在静态评估里形成 `OPEN_FOUR`
+- 旧逻辑会因此把这些 stabilizer 记成约 `48428` 的高分，即把这条 black reply 误判成“对白很好”
+- 但真实上此时轮到黑走，黑方已经有 `immediate_win`
+- 这个 bug 已修：rerank probe 里，如果 stabilizer 后对手下一手有 `immediate_win`，该 stabilizer 直接记成极差，不再按高静态分记好
+- 修完后，这个关键局面里 `(4,4)` 的 `avg_reply_score` 已从 `-16444` 收缩到 `-644`
+- 但 `(4,4)` 仍然排第 `1`，说明白棋 rerank 剩余的主问题仍是 reply source，而不是这一个 stabilizer bug
+- 更具体地说，黑方真实关键 reply `(7,4)` 在候选池里、在黑方完整 depth-5 搜索前排里，但在白方 rerank probe 的 top-3 reply 里仍然缺失
+
+当前 5 开局快速基线（黑白都开 rerank）结果是：
 
 - 白棋：`2胜 3负`
 - 黑棋：`5胜 0负`
 
-关闭 rerank 做对照后，5 开局会变成：
+全关 rerank 做对照后，5 开局会变成：
 
 - 白棋：`4胜 1负`
 - 黑棋：`2胜 3负`
 
-所以当前不能简单把 rerank 整体关掉。更准确的理解是：
+当前最佳实用配置已经确认是：
+
+- 黑棋 rerank：开
+- 白棋 rerank：关
+- 对应 5 开局结果：
+  - 白棋：`4胜 1负`
+  - 黑棋：`5胜 0负`
+
+所以当前不能简单把 rerank 整体关掉，也不该继续把“黑白都开 rerank”当默认主线。更准确的理解是：
 
 - rerank 对白棋某些边界局面有明显误导
 - 但它同时对黑棋整体强度贡献很大
-- 下一步应该优先修 rerank 的对手建模，而不是粗暴永久关闭
+- 白棋 stabilizer 的“高静态分掩盖对手下一手直接赢”这个 bug 已经修掉，但还不是决定性改进
+- 之后又补了一条更保守的 probe correctness 修正：probe 现在至少识别“当前轮到谁、当前手是否已有 immediate win”
+- 这条 side-aware immediate-race 修正没有改变 5 开局基线，但可以保留，因为它没有副作用
+- 下一步仍应优先修 white rerank 的 reply/stabilizer 建模，而不是粗暴重新开启白棋 rerank
 - `25` 点 center matrix 现在更适合做归一化主线与分歧手研究
 - `5` 点固定开局集更适合做日常快速回归
 

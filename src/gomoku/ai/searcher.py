@@ -43,7 +43,7 @@ _EARLY_ROOT_RERANK_LAMBDA_MAX = 0.8
 _EARLY_ROOT_RERANK_LAMBDA_AVG = 0.2
 _EARLY_ROOT_RERANK_ENABLED = True
 _EARLY_ROOT_RERANK_BLACK_ENABLED = True
-_EARLY_ROOT_RERANK_WHITE_ENABLED = True
+_EARLY_ROOT_RERANK_WHITE_ENABLED = False
 _EARLY_ROOT_RERANK_WHITE_REPLY_TOP_K = 3
 
 
@@ -237,40 +237,49 @@ class AISearcher:
                         reply_score = _FORCED_SCORE
                         stabilizer_candidates: list[dict[str, object]] = []
                     else:
-                        stabilizer_moves = self._candidate_moves(board)
-                        if not stabilizer_moves:
-                            reply_score = float(-self._evaluate(board))
+                        race_score = self._probe_immediate_race_score(
+                            board,
+                            current_player=self.ai_player,
+                            perspective_player=self.ai_player,
+                        )
+                        if race_score is not None:
+                            reply_score = -race_score
                             stabilizer_candidates = []
                         else:
-                            ordering_stats = SearchStats()
-                            ordered_stabilizers = self._order_moves(
-                                board,
-                                stabilizer_moves,
-                                self.ai_player,
-                                1,
-                                None,
-                                ordering_stats,
-                                use_killers=False,
-                            )[:_EARLY_ROOT_RERANK_STABILIZER_TOP_K]
-                            best_white_reply_eval = -math.inf
-                            stabilizer_candidates = []
-                            for stabilizer in ordered_stabilizers:
-                                board.place(stabilizer[0], stabilizer[1], self.ai_player)
-                                try:
-                                    if board.check_win(stabilizer[0], stabilizer[1]):
-                                        white_reply_eval = _FORCED_SCORE
-                                    else:
-                                        white_reply_eval = self._probe_stabilizer_eval(board)
-                                finally:
-                                    board.undo()
-                                best_white_reply_eval = max(best_white_reply_eval, white_reply_eval)
-                                stabilizer_candidates.append(
-                                    self._trace_move_dict(stabilizer, score=white_reply_eval)
-                                )
-                            if best_white_reply_eval == -math.inf:
-                                best_white_reply_eval = float(self._evaluate(board))
-                            # Convert back to black's perspective after white's best stabilizing reply.
-                            reply_score = -best_white_reply_eval
+                            stabilizer_moves = self._candidate_moves(board)
+                            if not stabilizer_moves:
+                                reply_score = float(-self._evaluate(board))
+                                stabilizer_candidates = []
+                            else:
+                                ordering_stats = SearchStats()
+                                ordered_stabilizers = self._order_moves(
+                                    board,
+                                    stabilizer_moves,
+                                    self.ai_player,
+                                    1,
+                                    None,
+                                    ordering_stats,
+                                    use_killers=False,
+                                )[:_EARLY_ROOT_RERANK_STABILIZER_TOP_K]
+                                best_white_reply_eval = -math.inf
+                                stabilizer_candidates = []
+                                for stabilizer in ordered_stabilizers:
+                                    board.place(stabilizer[0], stabilizer[1], self.ai_player)
+                                    try:
+                                        if board.check_win(stabilizer[0], stabilizer[1]):
+                                            white_reply_eval = _FORCED_SCORE
+                                        else:
+                                            white_reply_eval = self._probe_stabilizer_eval(board)
+                                    finally:
+                                        board.undo()
+                                    best_white_reply_eval = max(best_white_reply_eval, white_reply_eval)
+                                    stabilizer_candidates.append(
+                                        self._trace_move_dict(stabilizer, score=white_reply_eval)
+                                    )
+                                if best_white_reply_eval == -math.inf:
+                                    best_white_reply_eval = float(self._evaluate(board))
+                                # Convert back to black's perspective after white's best stabilizing reply.
+                                reply_score = -best_white_reply_eval
                 finally:
                     board.undo()
 
@@ -300,6 +309,31 @@ class AISearcher:
         finally:
             board.undo()
 
+    def _probe_immediate_race_score(
+        self,
+        board: Board,
+        *,
+        current_player: Player,
+        perspective_player: Player,
+    ) -> float | None:
+        """Return a hard tactical score when the side to move already wins.
+
+        Probe evaluation should at least respect side-to-move for immediate
+        wins. We intentionally keep this conservative: only the player whose
+        turn it is can trigger a hard conclusion here.
+        """
+        current_moves = self._candidate_moves(board)
+        if not current_moves:
+            return None
+
+        immediate_wins = self._find_immediate_winning_moves(board, current_moves, current_player)
+        if not immediate_wins:
+            return None
+
+        if current_player == perspective_player:
+            return float(_FORCED_SCORE)
+        return float(-_FORCED_SCORE)
+
     def _probe_stabilizer_eval(self, board: Board) -> float:
         """Evaluate a stabilizing reply for rerank probing.
 
@@ -308,13 +342,13 @@ class AISearcher:
         immediate winning move on the next ply. Guard that case first so the
         probe does not treat tactically lost lines as highly favorable.
         """
-        opponent_moves = self._candidate_moves(board)
-        if opponent_moves:
-            opponent_immediate_wins = self._find_immediate_winning_moves(
-                board, opponent_moves, self._opponent
-            )
-            if opponent_immediate_wins:
-                return float(-_FORCED_SCORE)
+        race_score = self._probe_immediate_race_score(
+            board,
+            current_player=self._opponent,
+            perspective_player=self.ai_player,
+        )
+        if race_score is not None:
+            return race_score
         return float(self._evaluate(board))
 
     def _rerank_early_root_candidates(

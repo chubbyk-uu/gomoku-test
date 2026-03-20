@@ -183,6 +183,7 @@ def test_white_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
     board = Board()
     board.place(5, 6, Player.BLACK)
     searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
+    monkeypatch.setattr(searcher_module, "_EARLY_ROOT_RERANK_WHITE_ENABLED", True)
 
     def fake_minimax(self, board, depth, alpha, beta, maximizing, stats, root_trace=None):
         candidates = [(4, 5), (4, 6), (4, 7)]
@@ -258,7 +259,31 @@ def test_white_rerank_stabilizer_penalizes_opponent_immediate_win():
     stab_35 = next(item for item in reply_57["stabilizer_candidates"] if tuple(item["move"]) == (3, 5))
 
     assert stab_35["score"] == -searcher_module._FORCED_SCORE
-    assert reply_57["score"] > -5_000
+
+
+def test_probe_immediate_race_score_respects_side_to_move():
+    board = Board()
+    for col in range(4):
+        board.place(7, col, Player.WHITE)
+
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=2)
+
+    assert (
+        searcher._probe_immediate_race_score(
+            board,
+            current_player=Player.WHITE,
+            perspective_player=Player.WHITE,
+        )
+        == searcher_module._FORCED_SCORE
+    )
+    assert (
+        searcher._probe_immediate_race_score(
+            board,
+            current_player=Player.BLACK,
+            perspective_player=Player.WHITE,
+        )
+        is None
+    )
 
 
 def test_ai_as_black_wins_when_possible():
