@@ -260,7 +260,7 @@ class AISearcher:
                                     if board.check_win(stabilizer[0], stabilizer[1]):
                                         white_reply_eval = _FORCED_SCORE
                                     else:
-                                        white_reply_eval = float(self._evaluate(board))
+                                        white_reply_eval = self._probe_stabilizer_eval(board)
                                 finally:
                                     board.undo()
                                 best_white_reply_eval = max(best_white_reply_eval, white_reply_eval)
@@ -299,6 +299,23 @@ class AISearcher:
             }
         finally:
             board.undo()
+
+    def _probe_stabilizer_eval(self, board: Board) -> float:
+        """Evaluate a stabilizing reply for rerank probing.
+
+        Rerank was overly optimistic when a stabilizer created a large static
+        score (for example an OPEN_FOUR) but still allowed the opponent an
+        immediate winning move on the next ply. Guard that case first so the
+        probe does not treat tactically lost lines as highly favorable.
+        """
+        opponent_moves = self._candidate_moves(board)
+        if opponent_moves:
+            opponent_immediate_wins = self._find_immediate_winning_moves(
+                board, opponent_moves, self._opponent
+            )
+            if opponent_immediate_wins:
+                return float(-_FORCED_SCORE)
+        return float(self._evaluate(board))
 
     def _rerank_early_root_candidates(
         self,

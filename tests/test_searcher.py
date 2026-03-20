@@ -239,6 +239,28 @@ def test_black_root_rerank_can_reorder_equal_score_candidates(monkeypatch):
     assert "rerank_score" in searcher.last_decision_trace.root_candidates[0]
 
 
+def test_white_rerank_stabilizer_penalizes_opponent_immediate_win():
+    board = Board()
+    for move in [
+        (7, 5, Player.BLACK),
+        (5, 3, Player.WHITE),
+        (6, 6, Player.BLACK),
+        (6, 2, Player.WHITE),
+        (8, 4, Player.BLACK),
+        (9, 3, Player.WHITE),
+        (6, 5, Player.BLACK),
+    ]:
+        board.place(*move)
+
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=5)
+    probe = searcher._probe_opponent_reply_score(board, (4, 4))
+    reply_57 = next(item for item in probe["reply_candidates"] if tuple(item["move"]) == (5, 7))
+    stab_35 = next(item for item in reply_57["stabilizer_candidates"] if tuple(item["move"]) == (3, 5))
+
+    assert stab_35["score"] == -searcher_module._FORCED_SCORE
+    assert reply_57["score"] > -5_000
+
+
 def test_ai_as_black_wins_when_possible():
     """AI 执黑时，有五连机会应该直接赢。"""
     board = Board()
