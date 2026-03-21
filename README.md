@@ -61,7 +61,7 @@
   - 黑棋：`5胜 0负`
 - 对应命令：
   - `PYTHONPATH=src python tools/run_opening_matrix.py --colors both --depth-a 5 --depth-b 5 --parallel 10 --output-white-json /tmp/white_first_move_filter_white.json --output-black-json /tmp/white_first_move_filter_black.json`
-- 对应总耗时约 `31s`
+- 在当前“白黑共用一个并行任务池”的脚本实现下，对应总耗时约 `19s`
 
 注意：
 
@@ -409,12 +409,23 @@ PYTHONPATH=src python tools/run_opening_matrix.py \
   --output-black-json benchmark_records/black_5_openings.json
 ```
 
+9 点集示例：
+
+```bash
+PYTHONPATH=src python tools/run_opening_matrix.py \
+  --opening-set 9 \
+  --output-white-json benchmark_records/white_9_openings.json \
+  --output-black-json benchmark_records/black_9_openings.json
+```
+
 说明：
 
 - `A` 是当前 `gomoku-test`
 - `B` 是 `zhou`
 - 当前工具默认跑 5 个固定 opening：天元与四角
+- `--opening-set 9` 会扩展为 9 个固定 opening：四个外角、四个内角和天元
 - 当前工具默认会把白/黑两组都跑完，并分别输出两个最终 JSON
+- `--colors both` 时，白/黑两组会共享同一个并行任务池，不再按颜色串行跑完整组
 - 中间 slice 结果会自动清理，不需要手工合并
 - `run_benchmark.py` 更适合随机/自对弈或跨 worktree 对比
 - 当前正式结果解读，应优先看 fixed opening matrix 的归一化主线簇，再看随机对战

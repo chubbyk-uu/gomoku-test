@@ -87,6 +87,8 @@
 - 左下 `(10,4)`
 - 右下 `(10,10)`
 
+工具层现在也支持一个扩展 9 点集（四个外角、四个内角和天元），可用于更强一点的快速回归；但默认快速基线仍以 5 点集为主。
+
 原因：
 
 - 旧 `25` 点矩阵对黑棋存在大量“同一条未触边主线的平移重复”，样本独立性不足。
@@ -122,7 +124,7 @@
   - `5` 开局快速集结果为：白棋 `5胜 0负`、黑棋 `5胜 0负`
   - 对应命令：
     - `PYTHONPATH=src python tools/run_opening_matrix.py --colors both --depth-a 5 --depth-b 5 --parallel 10 --output-white-json /tmp/white_first_move_filter_white.json --output-black-json /tmp/white_first_move_filter_black.json`
-  - 对应总耗时约 `31s`
+  - 在当前“白黑共用一个并行任务池”的脚本实现下，对应总耗时约 `19s`
   - 当前提交版代码就是这一实验状态
   - 这条结论目前只对 `5` 开局快速集坐实；还不能直接替代更大规模 benchmark 结论
 - 最近已经验证：

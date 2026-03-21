@@ -22,6 +22,22 @@ def test_fixed_openings_use_center_and_four_corners():
     ]
 
 
+def test_fixed_openings_9_adds_outer_corners():
+    module = importlib.import_module("run_opening_matrix")
+
+    assert module._FIXED_OPENINGS_9 == [
+        (2, 2),
+        (2, 12),
+        (12, 2),
+        (12, 12),
+        (4, 4),
+        (10, 4),
+        (4, 10),
+        (10, 10),
+        (7, 7),
+    ]
+
+
 def test_run_group_merges_slices_and_deletes_temporary_files(tmp_path, monkeypatch):
     module = importlib.import_module("run_opening_matrix")
 
@@ -92,21 +108,22 @@ def test_run_group_merges_slices_and_deletes_temporary_files(tmp_path, monkeypat
 
 def test_opening_matrix_cli_writes_two_custom_outputs(tmp_path, monkeypatch):
     module = importlib.import_module("run_opening_matrix")
-    captured: list[tuple[str, str, Path]] = []
+    captured: list[tuple[str, Path]] = []
 
-    def fake_run_group(*, repo_a, repo_b, openings, group, output_path, max_moves, parallel, slices_dir):
-        captured.append((group.group_key, repo_b, output_path))
-        payload = module._group_payload(
-            repo_a=repo_a,
-            repo_b=repo_b,
-            openings=openings,
-            group=group,
-            games=[],
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload), encoding="utf-8")
+    def fake_run_groups(*, repo_a, repo_b, openings, groups, max_moves, parallel, slices_dir):
+        for group, output_path in groups:
+            captured.append((group.group_key, output_path))
+            payload = module._group_payload(
+                repo_a=repo_a,
+                repo_b=repo_b,
+                openings=openings,
+                group=group,
+                games=[],
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    monkeypatch.setattr(module, "_run_group", fake_run_group)
+    monkeypatch.setattr(module, "_run_groups", fake_run_groups)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -132,19 +149,20 @@ def test_opening_matrix_cli_can_run_only_white(tmp_path, monkeypatch):
     module = importlib.import_module("run_opening_matrix")
     captured: list[str] = []
 
-    def fake_run_group(*, repo_a, repo_b, openings, group, output_path, max_moves, parallel, slices_dir):
-        captured.append(group.group_key)
-        payload = module._group_payload(
-            repo_a=repo_a,
-            repo_b=repo_b,
-            openings=openings,
-            group=group,
-            games=[],
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload), encoding="utf-8")
+    def fake_run_groups(*, repo_a, repo_b, openings, groups, max_moves, parallel, slices_dir):
+        for group, output_path in groups:
+            captured.append(group.group_key)
+            payload = module._group_payload(
+                repo_a=repo_a,
+                repo_b=repo_b,
+                openings=openings,
+                group=group,
+                games=[],
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    monkeypatch.setattr(module, "_run_group", fake_run_group)
+    monkeypatch.setattr(module, "_run_groups", fake_run_groups)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -165,23 +183,61 @@ def test_opening_matrix_cli_can_run_only_white(tmp_path, monkeypatch):
     assert captured == ["d5_a_white"]
 
 
+def test_opening_matrix_cli_can_select_9_opening_set(tmp_path, monkeypatch):
+    module = importlib.import_module("run_opening_matrix")
+    captured: list[list[tuple[int, int]]] = []
+
+    def fake_run_groups(*, repo_a, repo_b, openings, groups, max_moves, parallel, slices_dir):
+        captured.append(list(openings))
+        for group, output_path in groups:
+            payload = module._group_payload(
+                repo_a=repo_a,
+                repo_b=repo_b,
+                openings=openings,
+                group=group,
+                games=[],
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(module, "_run_groups", fake_run_groups)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_opening_matrix.py",
+            "--colors",
+            "white",
+            "--opening-set",
+            "9",
+            "--output-white-json",
+            str(tmp_path / "white_9.json"),
+        ],
+    )
+
+    module.main()
+
+    assert captured == [list(module._FIXED_OPENINGS_9)]
+
+
 def test_opening_matrix_cli_defaults_repo_b_to_local_opponent(tmp_path, monkeypatch):
     module = importlib.import_module("run_opening_matrix")
     captured: list[str] = []
 
-    def fake_run_group(*, repo_a, repo_b, openings, group, output_path, max_moves, parallel, slices_dir):
+    def fake_run_groups(*, repo_a, repo_b, openings, groups, max_moves, parallel, slices_dir):
         captured.append(repo_b)
-        payload = module._group_payload(
-            repo_a=repo_a,
-            repo_b=repo_b,
-            openings=openings,
-            group=group,
-            games=[],
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        for group, output_path in groups:
+            payload = module._group_payload(
+                repo_a=repo_a,
+                repo_b=repo_b,
+                openings=openings,
+                group=group,
+                games=[],
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    monkeypatch.setattr(module, "_run_group", fake_run_group)
+    monkeypatch.setattr(module, "_run_groups", fake_run_groups)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -197,3 +253,77 @@ def test_opening_matrix_cli_defaults_repo_b_to_local_opponent(tmp_path, monkeypa
     module.main()
 
     assert captured == [str((Path(module.__file__).resolve().parents[1] / "opponent" / "zhou").resolve())]
+
+
+def test_run_groups_merges_both_colors_from_one_task_pool(tmp_path, monkeypatch):
+    module = importlib.import_module("run_opening_matrix")
+
+    class FakeFuture:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def result(self):
+            return self._payload
+
+    class FakeExecutor:
+        max_workers_seen = None
+        submitted_tasks = []
+
+        def __init__(self, max_workers):
+            FakeExecutor.max_workers_seen = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, task, repo_a, repo_b, max_moves):
+            FakeExecutor.submitted_tasks.append(task)
+            return FakeFuture(
+                {
+                    "group_key": task.group.group_key,
+                    "depth_a": task.group.depth_a,
+                    "depth_b": task.group.depth_b,
+                    "a_color": task.group.a_color,
+                    "opening_index": task.opening_index,
+                    "opening_black": list(task.opening_move),
+                    "winner": "DRAW",
+                    "winner_engine": "DRAW",
+                    "num_moves": 12,
+                    "avg_ms_a": 1.0,
+                    "avg_ms_b": 2.0,
+                    "black_engine": "A" if task.group.a_color == "BLACK" else "B",
+                    "white_engine": "B" if task.group.a_color == "BLACK" else "A",
+                    "moves": [],
+                    "slice_key": task.slice_key,
+                }
+            )
+
+    monkeypatch.setattr(module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(module, "as_completed", lambda futures: list(futures))
+
+    openings = list(module._FIXED_OPENINGS)
+    white_group = module.GroupSpec(depth_a=5, depth_b=5, a_color="WHITE")
+    black_group = module.GroupSpec(depth_a=5, depth_b=5, a_color="BLACK")
+    white_output = tmp_path / "white.json"
+    black_output = tmp_path / "black.json"
+
+    module._run_groups(
+        repo_a="/repo/a",
+        repo_b="/repo/b",
+        openings=openings,
+        groups=[(white_group, white_output), (black_group, black_output)],
+        max_moves=120,
+        parallel=10,
+        slices_dir=tmp_path / "slices",
+    )
+
+    assert FakeExecutor.max_workers_seen == 10
+    assert len(FakeExecutor.submitted_tasks) == len(openings) * 2
+    assert {task.group.group_key for task in FakeExecutor.submitted_tasks} == {"d5_a_white", "d5_a_black"}
+
+    white_payload = json.loads(white_output.read_text(encoding="utf-8"))
+    black_payload = json.loads(black_output.read_text(encoding="utf-8"))
+    assert white_payload["group"]["completed_games"] == len(openings)
+    assert black_payload["group"]["completed_games"] == len(openings)

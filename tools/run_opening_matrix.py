@@ -1,11 +1,8 @@
 """Run the official fixed-opening head-to-head benchmark.
 
-Current matrix:
-- center: (7, 7)
-- top-left: (4, 4)
-- top-right: (4, 10)
-- bottom-left: (10, 4)
-- bottom-right: (10, 10)
+Supported opening sets:
+- 5-point: center + four inner corners
+- 9-point: center + four inner corners + four outer corners
 
 The tool supports three modes:
 - both: run A as WHITE and A as BLACK
@@ -37,13 +34,29 @@ from gomoku.config import Player  # noqa: E402
 
 _DEFAULT_MAX_MOVES = 120
 _DEFAULT_PARALLEL = 10
-_FIXED_OPENINGS: list[tuple[int, int]] = [
+_FIXED_OPENINGS_5: list[tuple[int, int]] = [
     (7, 7),
     (4, 4),
     (4, 10),
     (10, 4),
     (10, 10),
 ]
+_FIXED_OPENINGS_9: list[tuple[int, int]] = [
+    (2, 2),
+    (2, 12),
+    (12, 2),
+    (12, 12),
+    (4, 4),
+    (10, 4),
+    (4, 10),
+    (10, 10),
+    (7, 7),
+]
+_FIXED_OPENING_SETS: dict[str, list[tuple[int, int]]] = {
+    "5": _FIXED_OPENINGS_5,
+    "9": _FIXED_OPENINGS_9,
+}
+_FIXED_OPENINGS: list[tuple[int, int]] = _FIXED_OPENINGS_5
 
 
 @dataclass(frozen=True)
@@ -298,9 +311,79 @@ def _run_group(
         pass
 
 
+def _run_groups(
+    *,
+    repo_a: str,
+    repo_b: str,
+    openings: list[tuple[int, int]],
+    groups: list[tuple[GroupSpec, Path]],
+    max_moves: int,
+    parallel: int,
+    slices_dir: Path,
+) -> None:
+    tasks: list[tuple[TaskSpec, Path]] = []
+    games_by_group: dict[str, list[dict]] = {}
+    output_by_group: dict[str, Path] = {}
+    group_spec_by_key: dict[str, GroupSpec] = {}
+    slice_paths_by_group: dict[str, list[Path]] = {}
+
+    for group, output_path in groups:
+        games_by_group[group.group_key] = []
+        output_by_group[group.group_key] = output_path
+        group_spec_by_key[group.group_key] = group
+        slice_paths_by_group[group.group_key] = []
+        for index, opening in enumerate(openings):
+            tasks.append((TaskSpec(group=group, opening_index=index, opening_move=opening), output_path))
+
+    with ProcessPoolExecutor(max_workers=parallel) as executor:
+        future_map = {
+            executor.submit(_run_task, task, repo_a, repo_b, max_moves): (task, output_path)
+            for task, output_path in tasks
+        }
+        for future in as_completed(future_map):
+            task, output_path = future_map[future]
+            result = future.result()
+            group_key = task.group.group_key
+            games_by_group[group_key].append(result)
+            slice_payload = _group_payload(
+                repo_a=repo_a,
+                repo_b=repo_b,
+                openings=[task.opening_move],
+                group=task.group,
+                games=[result],
+            )
+            slice_path = _slice_path(output_path, task.slice_key, slices_dir)
+            _write_json(slice_path, slice_payload)
+            slice_paths_by_group[group_key].append(slice_path)
+            print(
+                f"[{group_key}] opening={task.opening_move} winner={result['winner_engine']}"
+                f" moves={result['num_moves']} avg_ms_a={result['avg_ms_a']:.1f}"
+                f" avg_ms_b={result['avg_ms_b']:.1f}",
+                flush=True,
+            )
+
+    for group_key, output_path in output_by_group.items():
+        group = group_spec_by_key[group_key]
+        final_payload = _group_payload(
+            repo_a=repo_a,
+            repo_b=repo_b,
+            openings=openings,
+            group=group,
+            games=games_by_group[group_key],
+        )
+        _write_json(output_path, final_payload)
+        for slice_path in slice_paths_by_group[group_key]:
+            slice_path.unlink(missing_ok=True)
+
+    try:
+        slices_dir.rmdir()
+    except OSError:
+        pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the official 5-opening benchmark and write merged white/black outputs."
+        description="Run the official fixed-opening benchmark and write merged white/black outputs."
     )
     parser.add_argument(
         "--repo-b",
@@ -313,6 +396,12 @@ def main() -> None:
         choices=("both", "white", "black"),
         default="both",
         help="Run both groups or only one color side for A",
+    )
+    parser.add_argument(
+        "--opening-set",
+        choices=tuple(_FIXED_OPENING_SETS),
+        default="5",
+        help="Choose the fixed opening set to run",
     )
     parser.add_argument(
         "--output-white-json",
@@ -340,7 +429,7 @@ def main() -> None:
 
     repo_a = str(REPO_ROOT)
     repo_b = str(args.repo_b.resolve())
-    openings = list(_FIXED_OPENINGS)
+    openings = list(_FIXED_OPENING_SETS[args.opening_set])
     parallel = max(1, min(args.parallel, len(openings) * 2))
     white_group = GroupSpec(depth_a=args.depth_a, depth_b=args.depth_b, a_color="WHITE")
     black_group = GroupSpec(depth_a=args.depth_a, depth_b=args.depth_b, a_color="BLACK")
@@ -360,30 +449,23 @@ def main() -> None:
     slices_dir = args.slices_dir.resolve() if args.slices_dir is not None else default_slices_dir
     slices_dir.mkdir(parents=True, exist_ok=True)
 
+    groups: list[tuple[GroupSpec, Path]] = []
     if args.colors in {"both", "white"}:
         assert args.output_white_json is not None
-        _run_group(
-            repo_a=repo_a,
-            repo_b=repo_b,
-            openings=openings,
-            group=white_group,
-            output_path=args.output_white_json.resolve(),
-            max_moves=args.max_moves,
-            parallel=parallel,
-            slices_dir=slices_dir,
-        )
+        groups.append((white_group, args.output_white_json.resolve()))
     if args.colors in {"both", "black"}:
         assert args.output_black_json is not None
-        _run_group(
-            repo_a=repo_a,
-            repo_b=repo_b,
-            openings=openings,
-            group=black_group,
-            output_path=args.output_black_json.resolve(),
-            max_moves=args.max_moves,
-            parallel=parallel,
-            slices_dir=slices_dir,
-        )
+        groups.append((black_group, args.output_black_json.resolve()))
+
+    _run_groups(
+        repo_a=repo_a,
+        repo_b=repo_b,
+        openings=openings,
+        groups=groups,
+        max_moves=args.max_moves,
+        parallel=parallel,
+        slices_dir=slices_dir,
+    )
 
 
 if __name__ == "__main__":
