@@ -32,6 +32,7 @@
 - `killer heuristic`
 - `local_hotness` 候选排序
 - early root rerank
+- white opening root filter（仅白棋第 1 手根节点）
 - 原生热点加速
 
 当前不在主线里生效的旧东西已经清掉，不要再围绕它们设计实验，包括：
@@ -104,40 +105,15 @@
 ## 5. 当前最重要的新发现
 
 截至当前工作，已经确认：
-
-- 白棋第 2 手最早的平移分叉，主因不是主 `minimax` 搜索，而是 root rerank probe 错误复用 `killer` 历史；这一点已经修复。
-- 修完后，白棋 fixed opening matrix 仍然会出现明显簇状分界，但分歧点被收缩到了更具体的位置。
-- 当前代表性白棋赢簇和输簇，在前 5 手归一化后完全一致。
-- 第一次关键分歧出现在第 6 手，且 `trace.source` 是 `vcf_block`。
-- 当前代表性赢簇 / 输簇在第 6 手前，顶层 `VCF` 都会看到一对归一化等价强攻；问题不是“只有一个正确防点”。
 - 现在已经进一步确认：`_generate_blocking_moves()` 会把两个几乎等价的可行防点排成不同顺序，而 `find_blocking_move()` 使用“首个成功即返回”，会把这个小排序差异直接放大成不同主线。
 - 该问题修复后，`d5` 对 `zhou` 的白棋 fixed opening matrix 已从 `10胜 15负 0和` 提升到 `20胜 5负 0和`；剩余失败全部收缩到最左一列 opening。
-- 左列剩余失败现在不再是第 6 手 `vcf_block` 分叉；代表性输局与相邻赢局前 7 手归一化后完全一致，第一个分歧已推迟到第 8 手 `minimax`。
-- 对左列代表失败局第 8 手做强制候选实验后已确认：
-  - 原本看起来更自然的旧路 `normalized (7,3)` 在左边界下确实更差，会更快输给 `zhou`
-  - 但当前实战手也不是最优，因为存在替代手 `normalized (4,4)`，强制该手后对白 `zhou(depth=5)` 可走成胜线
-- 对该第 8 手局面的实际棋盘候选继续拆解后，当前以 `AISearcher(5, Player.WHITE).find_best_move()` 的 depth-5 最终 root trace 为准：
-  - 实际可赢 `zhou` 的候选是实际坐标 `(4,2)`
-  - 在同一实际局面的 depth-5 最终 root trace 里，`(4,2)` 的原始根分是 `568`，属于原始前排候选
-  - 但 early root rerank 会把 `(4,2)` 压到最终第 `5`，并把根决策改成 `(4,4)`
-  - 因此“为什么没选到胜手”当前至少有一层已坐实：root rerank 确实把实际可赢候选 `(4,2)` 从前排压到了后面
-  - 后续再分析原始 `minimax` 时，必须使用同一实际局面、同一 depth=5、同一 `find_best_move()` 口径；不要混用归一化坐标或直接 `_minimax()` 的其他口径
-- 对 `(4,4)` 这条被 rerank 抬到第一的线，已坐实一个更具体的 white-rerank bug：
-  - 黑方 reply `(5,7)` 之后，白方 stabilizer `(3,5)` / `(7,1)` 会在静态评估里形成 `OPEN_FOUR`，旧逻辑因此给出约 `48428` 的高分
-  - 但该局面轮到黑走时，黑方其实有 `immediate_win`
-  - 这类“白方静态大优但黑下一手直接赢”的假好 stabilizer，会把 `(4,4)` 的 `avg_reply_score` 人为拉到极端负值
-  - 当前已修正：rerank probe 里，若 stabilizer 后对手下一手有 `immediate_win`，该 stabilizer 直接记成极差，不再按高静态分记好
-  - 该修正把 `(4,4)` 在关键局面上的 `avg_reply_score` 从 `-16444` 收缩到 `-644`，同时没有破坏黑棋 5 开局 `5胜 0负`
-- 但这一步不是最终解：
-  - 修完后 `(4,4)` 在该关键局面里仍然排第 `1`
-  - 白棋真正剩余的主问题仍是 reply source：黑方真实关键 reply `(7,4)` 在候选池里、在黑方完整 depth-5 搜索前排里，但在白方 rerank probe 的 top-3 reply 里仍然缺失
 - 当前 5 开局快速基线（黑白都开 rerank）：
   - 白棋：`2胜 3负`
   - 黑棋：`5胜 0负`
 - 关闭 rerank 做对照后，5 开局结果会变成：
   - 白棋：`4胜 1负`
   - 黑棋：`2胜 3负`
-- 当前最好的实用组合已经确认是：
+- 旧的最优实用组合曾经确认是：
   - 黑棋 rerank：开
   - 白棋 rerank：关
   - 对应 5 开局结果：白棋 `4胜 1负`、黑棋 `5胜 0负`
@@ -147,6 +123,7 @@
   - 对应命令：
     - `PYTHONPATH=src python tools/run_opening_matrix.py --colors both --depth-a 5 --depth-b 5 --parallel 10 --output-white-json /tmp/white_first_move_filter_white.json --output-black-json /tmp/white_first_move_filter_black.json`
   - 对应总耗时约 `31s`
+  - 当前提交版代码就是这一实验状态
   - 这条结论目前只对 `5` 开局快速集坐实；还不能直接替代更大规模 benchmark 结论
 - 最近已经验证：
   - 几轮“白棋开局专用结构分 / opening probe”实验虽然能修正局部 case 排序，但都会让 5-opening 白棋整体回归退化
@@ -161,11 +138,6 @@
   - 因此它可以保留为 correctness 修正，但不要把它误当成白棋 rerank 的主解
 - `25` 点 center matrix 现在更适合做归一化主线/分歧手研究。
 - `5` 点固定 opening 集更适合做日常快速回归。
-- 因此，当前最该查的问题不再是“root rerank 是否复用 killer”，而是：
-  - 为什么第 8 手 `find_best_move(depth=5)` 的最终根重排会把已经被实验验证可赢 `zhou` 的实际候选 `(4,2)` 压到第 `5`
-  - 为什么 rerank 会改选 `(4,4)` 而不是保留 `(4,2)` 这种真实可赢候选
-  - 为什么白方 rerank 的 reply source 仍然会漏掉像 `(7,4)` 这样真实关键、但不够 `local_hotness` 的黑方 reply
-  - 在统一到同一实际局面和同一 depth-5 口径后，再继续判断原始 `minimax` 与 rerank 各自承担多少责任
 
 额外说明：
 
@@ -173,23 +145,8 @@
 - 但目前还没有足够证据证明它是当前白棋主问题的首要根因。
 - 在没有更强证据前，不要先做“加大 center bias”这类全局改动。
 
-## 6. 当前重点调查顺序
 
-默认按这个顺序：
-
-1. 复现当前左列剩余失败簇的归一化代表局面
-2. 对第 8 手局面，先固定到同一实际棋盘和同一 depth=5 `find_best_move()` 口径，避免混用归一化坐标或直接 `_minimax()` 口径
-3. 再拆 early root rerank 的 reply/stabilizer probe，解释为什么 `(4,2)` 会被从前排压到第 `5`
-4. 在统一口径后，再继续验证 white rerank 的对手 reply top-k 是否漏掉真实关键 reply，以及即使纳入关键 reply 后，probe 评分语义为何仍会误判
-5. 判断 static eval 在边界 forcing 结构上的表达盲点是否在放大这类误判
-6. 把已修复的第 6 手 `vcf_block` 多解问题只当背景，不再当当前第一调查点
-7. 再判断分歧里是否还有模拟分支边界效应或其他固定棋盘偏置
-8. 只在拿到这一步证据后，再决定要不要处理 `center_bias`
-9. 最后再看更大规模 benchmark、速度、节点数、耗时
-
-如果某个结论无法落到“具体 opening 簇、具体手数、具体 trace.source、具体候选列表”，就还不够强。
-
-## 7. 总原则
+## 6. 总原则
 
 必须遵守：
 
@@ -210,14 +167,14 @@
 - 擅自改 `zhou` 语义来制造优势。
 - 没有 benchmark 证据时，声称强度提升。
 
-## 8. 改动策略
+## 7. 改动策略
 
 优先改：
 
 1. 搜索正确性与深度稳定性
 2. `VCF block` / `VCF win` 在关键 opening 簇上的正确性
 3. 候选排序质量
-4. 评估函数对关键开局形状的价值表达
+4. 评估函数对黑白关键开局形势的价值表达
 5. 性能优化
 
 当前热点分析已确认：
@@ -234,7 +191,7 @@
 - 没有隔离实验支撑的全局分数权重大改
 - 在没有证据前先增强 `center_bias`
 
-## 9. 证据要求
+## 8. 证据要求
 
 ### 9.1 声称“变强了”
 
@@ -256,7 +213,7 @@
 - 前后候选或评分差异
 - 为什么它能解释这条归一化主线为何分叉
 
-## 10. 标准工作流
+## 9. 标准工作流
 
 每次改动至少做完这个闭环：
 

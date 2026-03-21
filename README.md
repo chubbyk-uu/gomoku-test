@@ -10,13 +10,9 @@
 - 支持固定题库回归、搜索 profiling、自对弈 benchmark
 - 支持独立 `VCF` benchmark / profiling
 - 对局界面右上角提供 `Export Pos` 按钮，可随时导出当前人工对战局面
-- 当前稳定基线：`VCF + minimax + TT + killer + local hotness ordering + black-only early root rerank`
+- 当前提交版快照：`VCF + minimax + TT + killer + local hotness ordering + black-only early root rerank + white opening root filter(first move only)`
 - 棋盘带左侧/上方坐标与天元标记，便于定位落点
-- 当前测试状态：`pytest -q` -> `149 passed`
-- 当前已修复两个重要 correctness / probe 问题：
-  - 根节点 `TT` 条目与最终 root 决策不一致
-  - root rerank probe 错误复用 `killer` 历史
-- 当前已确认：`native / fallback` 的关键语义已对齐，编不编原生扩展不应改变 `VCF` 攻击候选集合或 `prefilter` 顺序
+- 当前测试状态：`pytest -q` 应保持全绿
 - 当前默认 AI 配置：
   - 最大搜索深度：`5`
   - 单步时间上限：`None`（仅按最大深度搜索）
@@ -43,104 +39,13 @@
 
 ## 当前基线
 
-当前对 `zhou(depth=5)` 的主线配置是：
+当前提交版配置是：
 
 - 黑白共用主搜索链：`immediate win/block -> VCF win/block -> iterative deepening minimax -> alpha-beta -> TT -> killer -> local_hotness`
 - 黑棋保留 early root rerank
 - 白棋默认关闭 early root rerank
+- 白棋第 `1` 手根节点额外启用一条保守 opening filter
 - 不使用 opening book / 手工特判开局
-
-但 fixed opening matrix 的解读方式已经更新：
-
-- 旧的 `5x5` center `25` 点矩阵仍然有研究价值，但不再适合作为默认快速基线。
-- 当前更推荐的快速固定开局集是 5 点：
-  - 天元 `(7,7)`
-  - 左上 `(4,4)`
-  - 右上 `(4,10)`
-  - 左下 `(10,4)`
-  - 右下 `(10,10)`
-
-- 黑棋在当前 `5x5` center opening matrix 上经常表现为“同一条未触边主线的平移重复”，因此 `25/25` 不能简单当成 25 个独立样本。
-- 白棋 25 盘也不是 25 个独立问题，而是少数几条归一化主线簇。
-- 当前最有价值的分析方式不是只看总胜负，而是看：
-  - 哪些 opening 属于同一条归一化主线
-  - 第一次分歧出现在第几手
-  - 分歧来自 `minimax`、`vcf_block`、`immediate_block` 还是别的阶段
-
-修复 `vcf_block` 之前，center `5x5` 旧矩阵曾出现过这组结果：
-
-- 白棋：`10胜 15负 0和`
-- 黑棋：`25胜 0负 0和`
-
-当前对白棋最关键的新发现：
-
-- 白棋代表性赢簇和输簇前 5 手归一化后完全一致。
-- 第一次关键分歧出现在第 6 手，且 `trace.source = vcf_block`。
-- 当前已经进一步确认：第 6 手前两边顶层 `VCF` 都能看到一对归一化等价强攻，问题不是“只有一个正确防点”。
-- 当前最重要的结构性嫌疑是：`find_blocking_move()` 采用“首个成功即返回”，会把 `_generate_blocking_moves()` 里很小的排序差异直接放大成不同主线。
-
-修掉 `vcf_block` 的首个成功即返回之后，center `5x5` 矩阵结果变成：
-
-- 白棋：`20胜 5负 0和`
-- 黑棋：`25胜 0负 0和`
-
-当前剩余白棋失败全部收缩到最左一列 opening。进一步分析已经确认：
-
-- 左列剩余失败不再是第 6 手 `vcf_block` 分叉；代表性输局与相邻赢局前 7 手归一化后完全一致。
-- 新的首个分歧点已经推迟到第 8 手，且 `trace.source = minimax`。
-- 对左列第 8 手做强制候选实验后，`normalized (7,3)` 这条旧路在左边界下确实更差，但当前实战手也不是最优。
-- 已经找到至少一个替代候选 `normalized (4,4)`，强制该手后对白 `zhou(depth=5)` 可走成胜线。
-
-因此，当前最直接的新问题已经收敛成：
-
-- 为什么第 8 手 `minimax` 没有选到这个边界适配胜手。
-
-进一步拆第 8 手根候选后，当前必须统一到同一口径：
-
-- 以原始 benchmark 棋谱重建到该盘第 8 手前的实际棋盘局面
-- 以 `AISearcher(5, Player.WHITE).find_best_move()` 的 depth-5 最终 `root_candidates` 为准
-
-在这个统一口径下：
-
-- 已被强制实验验证可赢 `zhou` 的候选是实际坐标 `(4,2)`
-- `(4,2)` 在 depth-5 最终 root trace 里仍属于原始前排候选，原始根分是 `568`
-- 但 early root rerank 会把 `(4,2)` 压到最终第 `5`
-- 最终根决策被改成 `(4,4)`
-
-所以当前剩余主问题应拆成两层：
-
-- 在同一实际局面、同一 depth-5 口径下，root rerank 为什么会把 `(4,2)` 从前排压到第 `5`
-- 在排除坐标和口径混淆之后，再继续判断原始 `minimax` 与 rerank 各自承担多少责任
-
-当前这一步先不再沿用任何混入归一化坐标或直接 `_minimax()` 的旧口径。后续继续分析 rerank 的对手 reply 建模时，也必须基于这同一个实际局面和同一个 depth-5 最终 root trace。
-
-最近又坐实了一个更具体的 white-rerank 问题：
-
-- 在 `(4,4)` 这条被 rerank 抬成第一的线里，black reply `(5,7)` 之后，white stabilizer `(3,5)` / `(7,1)` 会在静态评估里形成 `OPEN_FOUR`
-- 旧逻辑会因此把这些 stabilizer 记成约 `48428` 的高分，即把这条 black reply 误判成“对白很好”
-- 但真实上此时轮到黑走，黑方已经有 `immediate_win`
-- 这个 bug 已修：rerank probe 里，如果 stabilizer 后对手下一手有 `immediate_win`，该 stabilizer 直接记成极差，不再按高静态分记好
-- 修完后，这个关键局面里 `(4,4)` 的 `avg_reply_score` 已从 `-16444` 收缩到 `-644`
-- 但 `(4,4)` 仍然排第 `1`，说明白棋 rerank 剩余的主问题仍是 reply source，而不是这一个 stabilizer bug
-- 更具体地说，黑方真实关键 reply `(7,4)` 在候选池里、在黑方完整 depth-5 搜索前排里，但在白方 rerank probe 的 top-3 reply 里仍然缺失
-
-当前 5 开局快速基线（黑白都开 rerank）结果是：
-
-- 白棋：`2胜 3负`
-- 黑棋：`5胜 0负`
-
-全关 rerank 做对照后，5 开局会变成：
-
-- 白棋：`4胜 1负`
-- 黑棋：`2胜 3负`
-
-当前最佳实用配置已经确认是：
-
-- 黑棋 rerank：开
-- 白棋 rerank：关
-- 对应 5 开局结果：
-  - 白棋：`4胜 1负`
-  - 黑棋：`5胜 0负`
 
 最近新增了一条更保守的白棋 opening filter 实验，当前实验快照如下：
 
@@ -160,23 +65,16 @@
 
 注意：
 
-- 这条 opening filter 仍是当前实验配置，不应直接视为已经取代所有正式基线。
+- 这条 opening filter 现在已经在当前提交版代码中生效，但仍属于实验性配置。
+- 当前提交版代码状态与“当前推荐正式基线”不是同一个概念；正式结论仍以更大规模 benchmark 为准。
 - 目前它只在 `5` 开局快速集上坐实；是否能推广到更大规模固定开局集或随机对战，还需要后续验证。
 
 所以当前不能简单把 rerank 整体关掉，也不该继续把“黑白都开 rerank”当默认主线。更准确的理解是：
 
 - rerank 对白棋某些边界局面有明显误导
 - 但它同时对黑棋整体强度贡献很大
-- 白棋 stabilizer 的“高静态分掩盖对手下一手直接赢”这个 bug 已经修掉，但还不是决定性改进
-- 之后又补了一条更保守的 probe correctness 修正：probe 现在至少识别“当前轮到谁、当前手是否已有 immediate win”
-- 这条 side-aware immediate-race 修正没有改变 5 开局基线，但可以保留，因为它没有副作用
-- 下一步仍应优先修 white rerank 的 reply/stabilizer 建模，而不是粗暴重新开启白棋 rerank
-- `25` 点 center matrix 现在更适合做归一化主线与分歧手研究
-- `5` 点固定开局集更适合做日常快速回归
 
 补充说明：
-
-- `benchmark_records/` 现在是本地忽略目录，不再作为仓库跟踪内容。
 - 正式 benchmark 结果请单独记录执行日期、命令和结果摘要，而不要依赖仓库内长期保存的 JSON。
 - 人机对战里如果需要保留局面，可直接点击右上角 `Export Pos`，当前局面会写到 `benchmark_records/manual_positions/`，便于后续对白棋弱点或人工样本做复盘。
 
@@ -287,7 +185,7 @@ AI 搜索器位于 `src/gomoku/ai/searcher.py`。
 当前公开基线额外保留的 early root 逻辑：
 
 - 黑棋早期 root 候选会做轻量 early rerank 二次重排
-- 白棋默认关闭 early root rerank；当前白棋主线以 raw minimax 为准
+- 白棋默认关闭 early root rerank；当前白棋主线以 raw minimax 为准，但白棋第 `1` 手根节点会额外经过 opening filter
 - 该 rerank 只作用在根节点早期排序，不改变递归层主搜索语义
 - 当前 search 直接使用 `Board.get_candidate_moves()`，候选池语义与 `AI_CANDIDATE_RANGE` 保持一致
 
