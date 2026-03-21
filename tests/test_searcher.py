@@ -261,6 +261,64 @@ def test_white_rerank_stabilizer_penalizes_opponent_immediate_win():
     assert stab_35["score"] == -searcher_module._FORCED_SCORE
 
 
+def test_white_opening_bad_move_filter_only_changes_root_order(monkeypatch):
+    board = Board()
+    board.place(4, 4, Player.BLACK)
+    searcher = _make_searcher(ai_player=Player.WHITE, depth=1)
+
+    monkeypatch.setattr(
+        AISearcher,
+        "_order_moves",
+        lambda self, board, moves, current_player, depth, tt_move, stats, use_killers=True: [
+            (3, 3),
+            (3, 5),
+            (5, 3),
+        ],
+    )
+    monkeypatch.setattr(
+        AISearcher,
+        "_white_opening_bad_move_should_eliminate",
+        lambda self, board, move: move in {(3, 3), (3, 5)},
+    )
+
+    score_map = {(3, 3): 10, (3, 5): 20, (5, 3): 30}
+    monkeypatch.setattr(AISearcher, "_evaluate", lambda self, board: score_map[board.last_move])
+
+    score, move = searcher._minimax(
+        board,
+        depth=1,
+        alpha=-searcher_module.math.inf,
+        beta=searcher_module.math.inf,
+        maximizing=True,
+        stats=searcher.last_search_stats.__class__(),
+        root_trace=[],
+    )
+
+    assert move == (5, 3)
+    assert score == 30
+
+
+def test_white_opening_bad_move_filter_gated_to_white_first_move():
+    white = _make_searcher(ai_player=Player.WHITE, depth=1)
+    black = _make_searcher(ai_player=Player.BLACK, depth=1)
+
+    board_white_first = Board()
+    board_white_first.place(4, 4, Player.BLACK)
+    assert white._should_apply_white_opening_bad_move_filter(board_white_first) is True
+
+    board_white_later = Board()
+    for move in [(4, 4, Player.BLACK), (3, 3, Player.WHITE), (2, 4, Player.BLACK)]:
+        board_white_later.place(*move)
+    assert white._should_apply_white_opening_bad_move_filter(board_white_later) is False
+
+    board_empty = Board()
+    assert white._should_apply_white_opening_bad_move_filter(board_empty) is False
+
+    board_black = Board()
+    board_black.place(4, 4, Player.BLACK)
+    assert black._should_apply_white_opening_bad_move_filter(board_black) is False
+
+
 def test_probe_immediate_race_score_respects_side_to_move():
     board = Board()
     for col in range(4):

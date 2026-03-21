@@ -61,6 +61,13 @@
 - `native / fallback` 关键语义已对齐：不应再因为是否编译原生扩展而改变 `VCF` 攻击候选集合或 `prefilter` 顺序
 - `VCF` 已有结构化 trace：`VCFSolver.last_trace`
 - 当前 `search` 已直接跟随 `Board.get_candidate_moves()`；修改 `AI_CANDIDATE_RANGE` 会真实影响搜索候选宽度
+- 当前本地 `Cython` 扩展已生效：`PYTHONPATH=src python -c "import gomoku.ai._threat_kernels as m; print(m.__file__)"` 会指向 `.so`
+- 最近新增了一条更保守的白棋 opening filter 实验：
+  - 仅对白棋第 1 手根节点生效
+  - 只过滤 root 前 `8` 个候选
+  - probe 深度 `4`
+  - 仅使用 `black move5 threat` 与 `white move6 active followups`
+  - 当前不使用 `white_score`
 
 说明：
 
@@ -134,6 +141,13 @@
   - 黑棋 rerank：开
   - 白棋 rerank：关
   - 对应 5 开局结果：白棋 `4胜 1负`、黑棋 `5胜 0负`
+- 2026-03-21 最新快速实验快照：
+  - 在“黑棋 rerank 开、白棋 rerank 关”的基础上，额外保留上述“白棋第 1 手 opening filter”后，
+  - `5` 开局快速集结果为：白棋 `5胜 0负`、黑棋 `5胜 0负`
+  - 对应命令：
+    - `PYTHONPATH=src python tools/run_opening_matrix.py --colors both --depth-a 5 --depth-b 5 --parallel 10 --output-white-json /tmp/white_first_move_filter_white.json --output-black-json /tmp/white_first_move_filter_black.json`
+  - 对应总耗时约 `31s`
+  - 这条结论目前只对 `5` 开局快速集坐实；还不能直接替代更大规模 benchmark 结论
 - 最近已经验证：
   - 几轮“白棋开局专用结构分 / opening probe”实验虽然能修正局部 case 排序，但都会让 5-opening 白棋整体回归退化
   - 因此这些实验目前都已回退，不在主线中生效

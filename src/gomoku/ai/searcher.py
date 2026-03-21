@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gomoku.ai.evaluator import DEFENSE_WEIGHT, evaluate
+from gomoku.ai.threats import ThreatType, classify_attack_moves
 from gomoku.ai.vcf import VCFSolver
 from gomoku.board import Board
 from gomoku.config import (
@@ -45,6 +46,12 @@ _EARLY_ROOT_RERANK_ENABLED = True
 _EARLY_ROOT_RERANK_BLACK_ENABLED = True
 _EARLY_ROOT_RERANK_WHITE_ENABLED = False
 _EARLY_ROOT_RERANK_WHITE_REPLY_TOP_K = 3
+_WHITE_OPENING_BAD_MOVE_FILTER_ENABLED = True
+_WHITE_OPENING_BAD_MOVE_FILTER_MAX_PLY = 3
+_WHITE_OPENING_BAD_MOVE_FILTER_ROOT_TOP_K = 8
+_WHITE_OPENING_BAD_MOVE_FILTER_FOLLOWUP_TOP_K = 6
+_WHITE_OPENING_BAD_MOVE_FILTER_PROBE_DEPTH = 4
+_WHITE_OPENING_BAD_MOVE_FILTER_MAX_ACTIVE_FOLLOWUPS = 4
 
 
 @dataclass
@@ -119,6 +126,15 @@ class AISearcher:
         self.last_search_stats = SearchStats()
         self.last_decision_trace = DecisionTrace()
         self._deadline: Optional[float] = None
+        self._opening_root_filter_note: Optional[str] = None
+        self._attack_type_cache: dict[tuple[int, Player], ThreatType] = {}
+        self._opening_filter_best_move_cache: dict[tuple[int, Player, int], Optional[tuple[int, int]]] = {}
+        self._opening_filter_followup_moves_cache: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self._opening_filter_active_followup_cache: dict[tuple[int, tuple[tuple[int, int], ...]], int] = {}
+        self._opening_filter_ordered_moves_cache: dict[
+            tuple[int, Player, int], list[tuple[int, int]]
+        ] = {}
+        self._opening_filter_helper_searchers: dict[tuple[Player, int], "AISearcher"] = {}
 
     @staticmethod
     def _trace_move_dict(
@@ -185,6 +201,192 @@ class AISearcher:
         if self.ai_player == Player.WHITE:
             return _EARLY_ROOT_RERANK_WHITE_REPLY_TOP_K
         return _EARLY_ROOT_RERANK_REPLY_TOP_K
+
+    def _should_apply_white_opening_bad_move_filter(self, board: Board) -> bool:
+        return (
+            _WHITE_OPENING_BAD_MOVE_FILTER_ENABLED
+            and self.ai_player == Player.WHITE
+            and len(board.move_history) == 1
+        )
+
+    @staticmethod
+    def _compute_strongest_attack_type(board: Board, player: Player) -> ThreatType:
+        strongest = ThreatType.OTHER
+        for info in classify_attack_moves(board, board.get_candidate_moves(), player):
+            if info.attack_type > strongest:
+                strongest = info.attack_type
+        return strongest
+
+    def _strongest_attack_type(self, board: Board, player: Player) -> ThreatType:
+        key = (board.hash, player)
+        cached = self._attack_type_cache.get(key)
+        if cached is not None:
+            return cached
+        strongest = self._compute_strongest_attack_type(board, player)
+        self._attack_type_cache[key] = strongest
+        return strongest
+
+    def _count_active_white_followups(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+    ) -> int:
+        active = 0
+        for move in moves:
+            board.place(move[0], move[1], self.ai_player)
+            try:
+                if self._strongest_attack_type(board, self.ai_player) > ThreatType.OTHER:
+                    active += 1
+            finally:
+                board.undo()
+        return active
+
+    def _white_followup_light_score(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+    ) -> float | None:
+        best_score: float | None = None
+        for move in moves:
+            board.place(move[0], move[1], self.ai_player)
+            try:
+                score = float(self._evaluate(board))
+            finally:
+                board.undo()
+            if best_score is None or score > best_score:
+                best_score = score
+        return best_score
+
+    def _opening_filter_best_move(
+        self,
+        board: Board,
+        player: Player,
+        depth: int,
+    ) -> Optional[tuple[int, int]]:
+        key = (board.hash, player, depth)
+        cached = self._opening_filter_best_move_cache.get(key)
+        if cached is not None or key in self._opening_filter_best_move_cache:
+            return cached
+        searcher = self._opening_filter_helper_searchers.get((player, depth))
+        if searcher is None:
+            searcher = AISearcher(depth=depth, ai_player=player)
+            self._opening_filter_helper_searchers[(player, depth)] = searcher
+        move = searcher.find_best_move(board)
+        self._opening_filter_best_move_cache[key] = move
+        return move
+
+    def _opening_filter_ordered_moves(
+        self,
+        board: Board,
+        player: Player,
+        depth: int,
+    ) -> list[tuple[int, int]]:
+        key = (board.hash, player, depth)
+        cached = self._opening_filter_ordered_moves_cache.get(key)
+        if cached is not None:
+            return cached
+        searcher = self._opening_filter_helper_searchers.get((player, depth))
+        if searcher is None:
+            searcher = AISearcher(depth=depth, ai_player=player)
+            self._opening_filter_helper_searchers[(player, depth)] = searcher
+        ordered = searcher._order_moves(
+            board,
+            board.get_candidate_moves(),
+            player,
+            depth,
+            None,
+            SearchStats(),
+        )
+        self._opening_filter_ordered_moves_cache[key] = ordered
+        return ordered
+
+    def _opening_filter_followup_moves(
+        self,
+        board: Board,
+        depth: int,
+    ) -> list[tuple[int, int]]:
+        key = (board.hash, depth)
+        cached = self._opening_filter_followup_moves_cache.get(key)
+        if cached is not None:
+            return cached
+        moves = self._opening_filter_ordered_moves(board, self.ai_player, depth)[
+            :_WHITE_OPENING_BAD_MOVE_FILTER_FOLLOWUP_TOP_K
+        ]
+        self._opening_filter_followup_moves_cache[key] = moves
+        return moves
+
+    def _white_opening_bad_move_should_eliminate(
+        self,
+        board: Board,
+        move: tuple[int, int],
+    ) -> bool:
+        probe_depth = min(self.depth, _WHITE_OPENING_BAD_MOVE_FILTER_PROBE_DEPTH)
+        probe = AISearcher(depth=probe_depth, ai_player=self.ai_player)
+        opponent = self._opponent
+
+        board.place(move[0], move[1], self.ai_player)
+        try:
+            black_move3 = self._opening_filter_best_move(board, opponent, probe_depth)
+            if black_move3 is None:
+                return False
+            board.place(black_move3[0], black_move3[1], opponent)
+            try:
+                white_move4 = self._opening_filter_best_move(board, self.ai_player, probe_depth)
+                if white_move4 is None:
+                    return False
+                board.place(white_move4[0], white_move4[1], self.ai_player)
+                try:
+                    black_move5 = self._opening_filter_best_move(board, opponent, probe_depth)
+                    if black_move5 is None:
+                        return False
+                    board.place(black_move5[0], black_move5[1], opponent)
+                    try:
+                        black_threat = self._strongest_attack_type(board, opponent)
+                        if black_threat >= ThreatType.OPEN_FOUR:
+                            return True
+
+                        white_followups = self._opening_filter_followup_moves(board, probe_depth)
+                        active_key = (board.hash, tuple(white_followups))
+                        cached_active = self._opening_filter_active_followup_cache.get(active_key)
+                        if cached_active is None:
+                            cached_active = self._count_active_white_followups(board, white_followups)
+                            self._opening_filter_active_followup_cache[active_key] = cached_active
+                        white_active_followups = cached_active
+                        return (
+                            black_threat == ThreatType.OPEN_THREE
+                            and white_active_followups
+                            <= _WHITE_OPENING_BAD_MOVE_FILTER_MAX_ACTIVE_FOLLOWUPS
+                        )
+                    finally:
+                        board.undo()
+                finally:
+                    board.undo()
+            finally:
+                board.undo()
+        finally:
+            board.undo()
+
+    def _filter_white_opening_root_moves(
+        self,
+        board: Board,
+        moves: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        head = moves[:_WHITE_OPENING_BAD_MOVE_FILTER_ROOT_TOP_K]
+        tail = moves[_WHITE_OPENING_BAD_MOVE_FILTER_ROOT_TOP_K:]
+        survivors = [
+            move
+            for move in head
+            if not self._white_opening_bad_move_should_eliminate(board, move)
+        ]
+        eliminated = len(head) - len(survivors)
+        if not survivors:
+            self._opening_root_filter_note = None
+            return moves
+        self._opening_root_filter_note = (
+            f"white_opening_bad_move_filter_kept={len(survivors)}/{len(head)} "
+            f"eliminated={eliminated}"
+        )
+        return survivors + tail
 
     def _probe_opponent_reply_score(
         self,
@@ -414,6 +616,13 @@ class AISearcher:
         self.last_search_stats = SearchStats()
         self.last_decision_trace = DecisionTrace()
         self._killers.clear()
+        self._opening_root_filter_note = None
+        self._attack_type_cache.clear()
+        self._opening_filter_best_move_cache.clear()
+        self._opening_filter_followup_moves_cache.clear()
+        self._opening_filter_active_followup_cache.clear()
+        self._opening_filter_ordered_moves_cache.clear()
+        self._opening_filter_helper_searchers.clear()
         self._deadline = (
             time.perf_counter() + self.time_limit_s if self.time_limit_s is not None else None
         )
@@ -562,6 +771,10 @@ class AISearcher:
                 f"early_root_rerank_reply_top_k={_EARLY_ROOT_RERANK_REPLY_TOP_K}",
                 f"early_root_rerank_stabilizer_top_k={_EARLY_ROOT_RERANK_STABILIZER_TOP_K}",
             ]
+        if self._opening_root_filter_note is not None:
+            notes = self.last_decision_trace.notes or []
+            notes.append(self._opening_root_filter_note)
+            self.last_decision_trace.notes = notes
         return best_move
 
     def _evaluate(self, board: Board) -> int:
@@ -904,6 +1117,8 @@ class AISearcher:
         current_player = self.ai_player if maximizing else self._opponent
         stats.max_branching = max(stats.max_branching, len(moves))
         moves = self._order_moves(board, moves, current_player, depth, tt_move, stats)
+        if root_trace is not None and self._should_apply_white_opening_bad_move_filter(board):
+            moves = self._filter_white_opening_root_moves(board, moves)
 
         best_move: Optional[tuple[int, int]] = None
         if maximizing:

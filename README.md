@@ -24,6 +24,7 @@
   - 候选邻域半径配置：`2`
   - `VCF` 最大深度：`10`
   - `VCF` 候选上限：`16`
+- 当前本地 `Cython` 扩展已生效，`gomoku.ai._threat_kernels` 会加载 `.so`
 
 ## 主要特性
 
@@ -140,6 +141,27 @@
 - 对应 5 开局结果：
   - 白棋：`4胜 1负`
   - 黑棋：`5胜 0负`
+
+最近新增了一条更保守的白棋 opening filter 实验，当前实验快照如下：
+
+- 仅对白棋第 `1` 手根节点生效
+- 只过滤 root 前 `8` 个候选
+- probe 深度 `4`
+- 仅使用：
+  - `black move5 threat`
+  - `white move6 active followups`
+- 当前不使用 `white_score`
+- 在该实验配置下，`5` 开局快速集最新结果为：
+  - 白棋：`5胜 0负`
+  - 黑棋：`5胜 0负`
+- 对应命令：
+  - `PYTHONPATH=src python tools/run_opening_matrix.py --colors both --depth-a 5 --depth-b 5 --parallel 10 --output-white-json /tmp/white_first_move_filter_white.json --output-black-json /tmp/white_first_move_filter_black.json`
+- 对应总耗时约 `31s`
+
+注意：
+
+- 这条 opening filter 仍是当前实验配置，不应直接视为已经取代所有正式基线。
+- 目前它只在 `5` 开局快速集上坐实；是否能推广到更大规模固定开局集或随机对战，还需要后续验证。
 
 所以当前不能简单把 rerank 整体关掉，也不该继续把“黑白都开 rerank”当默认主线。更准确的理解是：
 
